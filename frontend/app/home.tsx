@@ -1,9 +1,13 @@
-// Home — Browser screen with WebView (text-only in UltraLite mode), search bar, history shortcuts.
+// Home — Browser screen.
+// UltraLite mode uses an Opera Mini / Facebook Basic hybrid:
+//   • Keep JS + CSS enabled (login pages / interactive sites keep working)
+//   • Use Chrome-Android Mobile User-Agent so sites serve their mobile build
+//   • Inject aggressive ad/tracker blocker EARLY (before content loads)
+//   • Blur images by default (tap-to-reveal), remove video/iframe/canvas
+//   • Strip decorative CSS (backgrounds, shadows, animations) — keep layout
+// Normal mode = plain WebView, no injections.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -28,22 +32,89 @@ import {
   hydrate,
   useAppState,
 } from '../src/state/appState';
-import { buildSearchUrl, deriveTitle, isUltraLiteUrl, toJina } from '../src/utils/url';
+import { buildSearchUrl, deriveTitle } from '../src/utils/url';
 import { addBookmark, addHistory, getHistory, HistoryItem } from '../src/storage/db';
 import { trackClick } from '../src/ads/AdManager';
+import { isDownloadUrl, downloadFile } from '../src/utils/downloads';
 
-// JS injected when UltraLite mode + page is rendered.
-// Blurs images (tap to reveal), removes video/iframe, simplifies CSS.
+// Chrome-Android mobile UA so sites serve their lightweight mobile version.
+const MOBILE_UA =
+  'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+
+// Runs BEFORE any page JS — monkey-patches XHR/fetch/createElement to block
+// ad + tracker domains. Saves bandwidth AND prevents scripts from injecting
+// more scripts. Reference: uBlock Origin's easy-list (short version).
+const AD_BLOCK_EARLY = `
+(function() {
+  try {
+    var BLOCK = /googletagmanager|google-analytics|googlesyndication|doubleclick|adservice|adnxs|adsrvr|facebook\\.net|connect\\.facebook|fbcdn\\.net\\/rsrc|scorecardresearch|chartbeat|amazon-adsystem|moatads|taboola|outbrain|quantserve|bing\\.com\\/action|hotjar|criteo|rubiconproject|pubmatic|openx|adform|yieldmo|smartadserver|adroll|indexexchange|krxd|adobedtm|branch\\.io\\/v1|optimizely|segment\\.io|mixpanel|amplitude|fullstory|clarity\\.ms|newrelic|sentry-cdn|tiktok\\.com\\/pixel/i;
+    // Override fetch
+    if (window.fetch) {
+      var of = window.fetch;
+      window.fetch = function(u) {
+        try {
+          var url = typeof u === 'string' ? u : (u && u.url) || '';
+          if (BLOCK.test(url)) return Promise.reject(new Error('blocked'));
+        } catch(e){}
+        return of.apply(this, arguments);
+      };
+    }
+    // Override XHR
+    if (window.XMLHttpRequest) {
+      var op = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(m, u) {
+        try { if (typeof u === 'string' && BLOCK.test(u)) { this._ul_blocked = true; } } catch(e){}
+        return op.apply(this, arguments);
+      };
+      var os = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function() {
+        if (this._ul_blocked) { try { this.abort(); } catch(e){} return; }
+        return os.apply(this, arguments);
+      };
+    }
+    // Override createElement for <script> & <iframe>
+    var oc = document.createElement.bind(document);
+    document.createElement = function(tag) {
+      var el = oc(tag);
+      var t = (tag||'').toLowerCase();
+      if (t === 'script' || t === 'iframe' || t === 'img') {
+        try {
+          var proto = t === 'script' ? HTMLScriptElement.prototype :
+                      t === 'iframe' ? HTMLIFrameElement.prototype :
+                                       HTMLImageElement.prototype;
+          var desc = Object.getOwnPropertyDescriptor(proto, 'src');
+          if (desc && desc.set) {
+            Object.defineProperty(el, 'src', {
+              configurable: true,
+              get: desc.get,
+              set: function(v) {
+                if (typeof v === 'string' && BLOCK.test(v)) return;
+                desc.set.call(this, v);
+              }
+            });
+          }
+        } catch(e){}
+      }
+      return el;
+    };
+  } catch(e){}
+  true;
+})();
+`;
+
+// Runs AFTER content loads — aesthetic + image-blur + element removal.
+// Preserves layout (flex/position) so login forms stay aligned.
 const ULTRA_INJECTED_JS = `
 (function() {
   try {
     var style = document.createElement('style');
     style.innerHTML = \`
+      /* Keep pictures loadable but low-impact — user taps to fully reveal. */
       img, picture, source {
-        filter: blur(18px) grayscale(0.6) !important;
-        opacity: 0.55 !important;
-        max-width: 120px !important;
-        max-height: 120px !important;
+        filter: blur(14px) grayscale(0.4) !important;
+        opacity: 0.7 !important;
+        max-width: 140px !important;
+        max-height: 140px !important;
         cursor: pointer !important;
       }
       img.__ul_revealed {
@@ -52,41 +123,48 @@ const ULTRA_INJECTED_JS = `
         max-width: 100% !important;
         max-height: none !important;
       }
-      video, iframe, svg, canvas, embed, object {
+      /* Kill bandwidth-heavy embeds. */
+      video, canvas, embed, object { display: none !important; }
+      iframe:not([src*="recaptcha"]):not([src*="hcaptcha"]):not([src*="challenge"]) {
         display: none !important;
       }
+      /* Strip decorative CSS that wastes paint + downloads. Keep layout alive. */
       * {
         background-image: none !important;
         box-shadow: none !important;
+        text-shadow: none !important;
         transition: none !important;
         animation: none !important;
+        background-attachment: scroll !important;
       }
-      body {
-        font-family: serif !important;
-        font-size: 17px !important;
-        line-height: 1.5 !important;
-        color: #111 !important;
-        background: #fff !important;
-      }
-      a { color: #5C0A1A !important; text-decoration: underline !important; }
-      header, footer, aside, nav,
-      [role="banner"], [role="navigation"],
-      [class*="ad-"], [class*="-ad"], [id*="ad-"], [id*="-ad"],
-      [class*="sidebar"], [class*="popup"], [class*="modal"],
-      [class*="cookie"], [class*="consent"], [class*="newsletter"] {
+      /* Hide obvious ad/cookie/popup clutter but NOT login forms. */
+      [class*="cookie"], [class*="consent"], [class*="gdpr"],
+      [class*="newsletter"], [class*="subscribe-pop"],
+      [class*="popup-ad"], [class*="ad-container"],
+      [class*="banner-ad"], [id*="cookie-banner"], [id*="gdpr"] {
         display: none !important;
       }
-      script { display: none !important; }
     \`;
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
 
-    // Tap-to-reveal for blurred images (saves data until user wants it)
+    // Tap-to-reveal — click an image once to load the full version.
     document.addEventListener('click', function(e) {
       var t = e.target;
       if (t && t.tagName === 'IMG' && !t.classList.contains('__ul_revealed')) {
         e.preventDefault();
         e.stopPropagation();
         t.classList.add('__ul_revealed');
+      }
+    }, true);
+
+    // Expose a message handler so RN can intercept download clicks.
+    document.addEventListener('click', function(e) {
+      var a = e.target && e.target.closest ? e.target.closest('a') : null;
+      if (a && a.href && (a.hasAttribute('download') || a.getAttribute('download') !== null)) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'download', url: a.href }));
+          e.preventDefault();
+        } catch(err){}
       }
     }, true);
   } catch(e) {}
@@ -142,13 +220,17 @@ export default function Home() {
 
   const handleToggle = (v: boolean) => {
     setUltraLite(v);
-    // re-load current URL with appropriate transformation
-    if (url) {
-      const re = buildSearchUrl(input || url, v);
-      setUrl(re);
+    // Re-load current URL with new settings applied.
+    if (url && webRef.current) {
+      try { webRef.current.reload(); } catch {}
     }
     trackClick();
   };
+
+  const handleDownload = useCallback(async (dlUrl: string) => {
+    trackClick();
+    await downloadFile(dlUrl);
+  }, []);
 
   const menuItems = useMemo(
     () => [
@@ -183,6 +265,12 @@ export default function Home() {
             await addBookmark(pageTitle || deriveTitle(url), url);
           }
         },
+      },
+      {
+        key: 'downloads',
+        label: 'Downloads',
+        icon: 'download-outline' as const,
+        onPress: () => router.push('/downloads'),
       },
       {
         key: 'radio',
@@ -320,7 +408,7 @@ export default function Home() {
             <Text style={styles.modeHint}>
               Mode:{' '}
               <Text style={{ color: COLORS.maroon, fontWeight: '700' }}>
-                {ultraLite ? 'UltraLite (Text-only)' : 'Normal'}
+                {ultraLite ? 'UltraLite (Data Saver)' : 'Normal'}
               </Text>
             </Text>
           </ScrollView>
@@ -341,9 +429,11 @@ export default function Home() {
               javaScriptEnabled={true}
               domStorageEnabled
               cacheEnabled
-              thirdPartyCookiesEnabled={false}
+              thirdPartyCookiesEnabled
+              sharedCookiesEnabled
               setSupportMultipleWindows={false}
               mediaPlaybackRequiresUserAction
+              allowsFullscreenVideo={!ultraLite}
               onLoadStart={() => setLoading(true)}
               onLoadEnd={() => {
                 setLoading(false);
@@ -354,32 +444,27 @@ export default function Home() {
               }
               onNavigationStateChange={onNav}
               onShouldStartLoadWithRequest={(req) => {
-                // In UltraLite mode, force any page (other than DDG Lite, jina,
-                // and file downloads) through the r.jina.ai text proxy for
-                // true 64kbps-friendly text-only experience.
-                if (!ultraLite) return true;
                 const u = req.url || '';
-                if (!u.startsWith('http')) return true;
-                if (u.startsWith('https://r.jina.ai/')) return true;
-                if (u.includes('duckduckgo.com/lite')) return true;
-                if (u.includes('duckduckgo.com/l/')) {
-                  // DDG's click-through redirector — let it through, our
-                  // onNavigationStateChange will catch the final URL.
-                  return true;
+                // Intercept downloadable URLs — route to our Downloads manager.
+                if (isDownloadUrl(u)) {
+                  handleDownload(u);
+                  return false;
                 }
-                // Rewrite to jina proxy
-                const jina = toJina(u);
-                setUrl(jina);
-                return false;
+                return true;
               }}
-              injectedJavaScript={
-                ultraLite && !isUltraLiteUrl(url) ? ULTRA_INJECTED_JS : ''
+              onMessage={(event) => {
+                try {
+                  const msg = JSON.parse(event.nativeEvent.data);
+                  if (msg && msg.type === 'download' && msg.url) {
+                    handleDownload(msg.url);
+                  }
+                } catch {}
+              }}
+              injectedJavaScriptBeforeContentLoaded={
+                ultraLite ? AD_BLOCK_EARLY : ''
               }
-              userAgent={
-                ultraLite
-                  ? 'Mozilla/5.0 (Linux; Android 6.0; Nokia 8110) UltraLite/1.0 (compatible; lite)'
-                  : undefined
-              }
+              injectedJavaScript={ultraLite ? ULTRA_INJECTED_JS : ''}
+              userAgent={ultraLite ? MOBILE_UA : undefined}
             />
             <View style={styles.navBar}>
               <Pressable

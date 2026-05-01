@@ -63,10 +63,12 @@ export default function RootLayout() {
                   This is a browsing utility designed for low-bandwidth
                   (2G/64kbps) networks. The user is solely responsible for the
                   content they search, view, or stream through this app.{'\n\n'}
-                  • No browsing data is sent to any server. All history and
-                  bookmarks are stored locally on your device only.{'\n'}
-                  • Strict SafeSearch is enforced on all searches.
+                  • No browsing data is sent to any server. All history,
+                  bookmarks and downloads are stored locally on your device.
                   {'\n'}
+                  • Strict SafeSearch is enforced on all searches.{'\n'}
+                  • In UltraLite mode, ads and trackers are blocked and images
+                  are blurred to save data — tap an image to reveal it.{'\n'}
                   • Radio streams are sourced from a public open directory
                   (radio-browser.info) and are not hosted by UltraLite.
                 </Text>

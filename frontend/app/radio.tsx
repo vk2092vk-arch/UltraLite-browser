@@ -454,7 +454,6 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: FONT.size.md, color: COLORS.text, padding: 0 },
   catScroll: {
     backgroundColor: COLORS.bg,
-    maxHeight: 56,
   },
   catRow: {
     paddingHorizontal: SPACING.md,
@@ -464,7 +463,7 @@ const styles = StyleSheet.create({
   catChip: {
     minWidth: 72,
     paddingHorizontal: SPACING.md,
-    paddingVertical: 9,
+    height: 38,
     borderRadius: RADIUS.pill,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
@@ -478,6 +477,8 @@ const styles = StyleSheet.create({
     fontSize: FONT.size.sm,
     fontWeight: FONT.weight.bold,
     textAlign: 'center',
+    includeFontPadding: false,
+    lineHeight: 18,
   },
   infoBanner: {
     flexDirection: 'row',

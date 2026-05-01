@@ -21,6 +21,16 @@ export async function getDb() {
       url TEXT NOT NULL UNIQUE,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS downloads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      filename TEXT NOT NULL,
+      url TEXT NOT NULL,
+      local_uri TEXT NOT NULL,
+      size INTEGER DEFAULT 0,
+      mime TEXT,
+      status TEXT DEFAULT 'done',
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -106,4 +116,48 @@ export async function setSetting(key: string, value: string) {
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     [key, value]
   );
+}
+
+// ---------- Downloads ----------
+export interface DownloadItem {
+  id: number;
+  filename: string;
+  url: string;
+  local_uri: string;
+  size: number;
+  mime: string | null;
+  status: string;
+  created_at: number;
+}
+
+export async function addDownload(
+  filename: string,
+  url: string,
+  local_uri: string,
+  size: number,
+  mime: string | null
+): Promise<number> {
+  const d = await getDb();
+  const res = await d.runAsync(
+    'INSERT INTO downloads (filename, url, local_uri, size, mime, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [filename, url, local_uri, size, mime, 'done', Date.now()]
+  );
+  return res.lastInsertRowId ?? 0;
+}
+
+export async function getDownloads(): Promise<DownloadItem[]> {
+  const d = await getDb();
+  return await d.getAllAsync<DownloadItem>(
+    'SELECT * FROM downloads ORDER BY created_at DESC'
+  );
+}
+
+export async function removeDownload(id: number) {
+  const d = await getDb();
+  await d.runAsync('DELETE FROM downloads WHERE id = ?', [id]);
+}
+
+export async function clearDownloads() {
+  const d = await getDb();
+  await d.runAsync('DELETE FROM downloads');
 }
