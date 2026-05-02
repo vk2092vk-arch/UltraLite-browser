@@ -75,6 +75,11 @@ img{display:none;}
 // ────────────────────────────────────────────────────────────────────────────
 
 // Tags whose ENTIRE element (open → close, content included) is removed.
+// Build #21: added header/footer/nav/aside to this list.  On 64 kbps users
+// want the article body; the site chrome (logo strip, mega-menu, legal
+// footer, cookie nag, "Related posts" rail) is dead weight.  Buttons are
+// intentionally NOT killed globally so native form-submit / search buttons
+// on cleaned pages still work when tapped in the WebView.
 const KILL_BLOCK = [
   'script',
   'style',
@@ -88,6 +93,10 @@ const KILL_BLOCK = [
   'picture',
   'template',
   'dialog',
+  'header',
+  'footer',
+  'nav',
+  'aside',
 ];
 
 // Self-closing / void tags that should be removed entirely.
@@ -130,9 +139,15 @@ const ATTR_WHITELIST = new Set([
 ]);
 
 // Common ad / cookie / popup / sidebar / footer container tokens.  Containers
-// whose class or id matches any of these are removed entirely.
+// whose class or id matches any of these are removed entirely.  Expanded in
+// build #21 to cover the chrome that survives <header>/<footer>/<nav>/<aside>
+// stripping — many sites use plain <div>s for mega-menus and rails.
 const JUNK_TOKENS =
-  /(^|[\s_\-])(ad|ads|adsense|adslot|advert|advertisement|banner|popup|popover|modal|overlay|cookie|consent|gdpr|tracker|tracking|analytics|comments?|share|sharing|social|sidebar|side\-bar|footer|skyscraper|recommend|related|newsletter|subscribe)([\s_\-]|$)/i;
+  /(^|[\s_\-])(ad|ads|adsense|adslot|advert|advertisement|banner|popup|popover|modal|overlay|cookie|consent|gdpr|tracker|tracking|analytics|comments?|share|sharing|social|sidebar|side\-bar|footer|foot|header|head|topbar|topBar|bottombar|bottom\-bar|masthead|megamenu|mega\-menu|breadcrumb|related|recommend|newsletter|subscribe|subscription|promo|cta|call\-to\-action|skyscraper|rail|widget|toolbar|menu|menubar|drawer|hamburger|search\-bar|searchbar|logo\-strip|legal|copyright|skip\-link|skiplink|notification|notice|alert\-bar|announcement|region\-switcher|locale|language\-switcher|accessibility|tooltip|back\-to\-top)([\s_\-]|$)/i;
+
+// ARIA roles that identify non-content UI regions — whole element removed.
+const JUNK_ROLES =
+  /\b(navigation|banner|contentinfo|complementary|search|menubar|menu|dialog|alertdialog|toolbar|region|form|presentation)\b/i;
 
 function escapeAttr(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
@@ -191,31 +206,79 @@ function cleanHtml(rawHtml: string, baseUrl: string): { title: string; body: str
     body = body.replace(re, '');
   }
 
-  // 5.  Replace <img …> with a small placeholder.  Preserve alt as the label
-  //     so screen-context isn't lost.
+  // 5.  Replace <img …> with a small placeholder.  Keep the marker tiny so
+  //     dozens of decorative icons don't drown the actual article text.
+  //     Only when `alt` is short and content-bearing do we include it.
   body = body.replace(/<img\b[^>]*>/gi, (m) => {
     const altM = m.match(/\balt\s*=\s*("([^"]*)"|'([^']*)')/i);
     const alt = altM ? (altM[2] !== undefined ? altM[2] : altM[3] || '') : '';
-    const label = alt ? alt.slice(0, 24).trim() : 'img';
-    return `<span class="__ul_imgbox">[${escapeHtml(label || 'img')}]</span>`;
+    const trimmed = alt.trim();
+    // Skip decorative / icon / logo / overlay / spacer images entirely —
+    // users on 2G don't care about them and they add dead weight.
+    if (
+      !trimmed ||
+      /^(logo|icon|image|photo|picture|overlay|spacer|separator|divider)$/i.test(
+        trimmed
+      ) ||
+      /^(logo|icon|image|banner|hero|avatar|profile)/i.test(trimmed)
+    ) {
+      return '';
+    }
+    if (trimmed.length > 30) return '<span class="__ul_imgbox">[img]</span>';
+    return `<span class="__ul_imgbox">[${escapeHtml(trimmed)}]</span>`;
   });
 
-  // 6.  Drop "junk" containers — divs/sections/asides whose class/id flags
-  //     them as ads, cookie banners, footers, etc.  We do this in a SINGLE
-  //     pass per opening-tag-without-content match because nested DOMs make
-  //     full removal lossy.
+  // 6.  Drop "junk" containers — divs/sections with class/id flags or ARIA
+  //     roles that identify them as ads, cookie banners, mega-menus, rails,
+  //     related-posts widgets, etc.  Done by replacing the OPENING tag with
+  //     a safe <span> so we don't unbalance DOM structure while stripping
+  //     the identity attributes.  The content itself stays (usually mostly
+  //     empty after other rules have run).
   body = body.replace(
-    /<(div|aside|section|nav|footer|header|form)\b[^>]*\b(class|id)\s*=\s*("[^"]*"|'[^']*')[^>]*>/gi,
-    (match, _tag, _attr, val) => {
-      const inner = val.slice(1, -1);
-      if (JUNK_TOKENS.test(inner)) {
-        // Replace the opening tag with a no-op span so we don't break HTML
-        // structure — the content remains, but the styling/identity is gone.
+    /<(div|section|form|span|article|main|figure)\b([^>]*)>/gi,
+    (match, _tag, rawAttrs) => {
+      // class / id junk-token match
+      const classM = /\bclass\s*=\s*("([^"]*)"|'([^']*)')/i.exec(rawAttrs);
+      const idM = /\bid\s*=\s*("([^"]*)"|'([^']*)')/i.exec(rawAttrs);
+      const roleM = /\brole\s*=\s*("([^"]*)"|'([^']*)')/i.exec(rawAttrs);
+      const ariaLabelM = /\baria-label\s*=\s*("([^"]*)"|'([^']*)')/i.exec(rawAttrs);
+      const classVal =
+        classM ? (classM[2] !== undefined ? classM[2] : classM[3]) : '';
+      const idVal = idM ? (idM[2] !== undefined ? idM[2] : idM[3]) : '';
+      const roleVal =
+        roleM ? (roleM[2] !== undefined ? roleM[2] : roleM[3]) : '';
+      const ariaVal =
+        ariaLabelM
+          ? (ariaLabelM[2] !== undefined ? ariaLabelM[2] : ariaLabelM[3])
+          : '';
+      if (
+        JUNK_TOKENS.test(classVal) ||
+        JUNK_TOKENS.test(idVal) ||
+        JUNK_ROLES.test(roleVal) ||
+        JUNK_TOKENS.test(ariaVal)
+      ) {
         return '<span>';
       }
       return match;
     }
   );
+
+  // 6b. Drop elements that contain ONLY "Loading…" / "Loading section…"
+  //     placeholder text — these are skeleton screens the site uses while
+  //     JS hydrates.  Since we've killed JS, they'd otherwise litter the
+  //     page with dozens of empty lines.
+  body = body.replace(
+    /<(div|span|p|section)[^>]*>\s*(?:Loading[^<]{0,40})\s*<\/\1>/gi,
+    ''
+  );
+  // 6c. Drop elements that are completely empty after earlier passes.
+  //     Repeat twice to catch nested empties.
+  for (let i = 0; i < 3; i++) {
+    body = body.replace(
+      /<(div|span|section|article|main|figure|p)[^>]*>\s*<\/\1>/gi,
+      ''
+    );
+  }
 
   // 7.  For every remaining open-tag, strip dangerous attributes & resolve
   //     relative URLs.  Closing tags are passed through verbatim.

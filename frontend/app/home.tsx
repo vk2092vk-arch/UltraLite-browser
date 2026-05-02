@@ -47,16 +47,77 @@ import {
 import { trackClick } from '../src/ads/AdManager';
 import { isDownloadUrl, downloadFile } from '../src/utils/downloads';
 import { fetchCleanHtml, isLoginUrl } from '../src/utils/ultraliteFetch';
-import { mapToLegacy, isTrustedLite } from '../src/utils/legacyMap';
+import {
+  mapToLegacy,
+  isTrustedLite,
+  unwrapDuckDuckGoRedirect,
+} from '../src/utils/legacyMap';
 
 // Chrome-Android mobile UA so sites serve their lightweight mobile build.
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
-// Light cosmetic cleanup for login-page WebViews (UltraLite, URI mode).
-// Hides cookie / GDPR / consent banners that bloat lite-version pages on
-// 64 kbps. This is a UX helper for browser navigation only — it does not
-// affect any in-app advertising in any way.
+// ──────────────────────────────────────────────────────────────────────────
+//  Strict image / media block for UltraLite URI-mode WebViews.
+//  Injected as `injectedJavaScriptBeforeContentLoaded` so it runs BEFORE any
+//  <img> / <video> / <iframe> has a chance to fire a network request.  This
+//  is what keeps 2G bandwidth tight on sites that we render directly
+//  (mbasic.facebook.com, instagram classic login, m.youtube, m.wikipedia
+//  etc.) — without this JS they'd happily suck down megabytes of avatars.
+// ──────────────────────────────────────────────────────────────────────────
+const STRICT_MEDIA_BLOCK = `
+(function(){
+  try {
+    // 1. Inject a high-specificity stylesheet that hides every media /
+    //    decorative element plus common cookie / consent / notice banners.
+    var css = document.createElement('style');
+    css.id = '__ul_media_block';
+    css.innerHTML =
+      'img,picture,source,video,audio,iframe,embed,object,svg,canvas,' +
+      'input[type="image"]{display:none!important;visibility:hidden!important;' +
+      'width:0!important;height:0!important;max-width:0!important;max-height:0!important;}' +
+      '[style*="background-image" i],[style*="background: url" i],' +
+      '[style*="background:url" i]{background-image:none!important;}' +
+      '[class*="cookie" i],[class*="consent" i],[class*="gdpr" i],' +
+      '[class*="banner" i],[class*="popup" i],[class*="modal" i],' +
+      '[id*="cookie" i],[id*="consent" i],[id*="gdpr" i]{display:none!important;}' +
+      'body{background:#fff!important;color:#111!important;}';
+    (document.head || document.documentElement).appendChild(css);
+
+    // 2. Patch HTMLImageElement.src so any JS-created <img> silently no-ops.
+    //    This stops lazy-loaders / analytics pixels cold.
+    try {
+      var proto = HTMLImageElement.prototype;
+      var descr = Object.getOwnPropertyDescriptor(proto, 'src');
+      Object.defineProperty(proto, 'src', {
+        configurable: true,
+        enumerable: true,
+        get: function(){ return ''; },
+        set: function(){ /* swallow */ },
+      });
+    } catch(e){}
+
+    // 3. Keep media suppressed even as the DOM hydrates.
+    var mo = new MutationObserver(function(muts){
+      muts.forEach(function(m){
+        m.addedNodes && m.addedNodes.forEach(function(n){
+          if(n.nodeType!==1) return;
+          if(n.tagName==='IMG'||n.tagName==='VIDEO'||n.tagName==='IFRAME'||
+             n.tagName==='PICTURE'||n.tagName==='SOURCE'||n.tagName==='OBJECT'){
+            try { n.remove(); } catch(e){}
+          }
+        });
+      });
+    });
+    try { mo.observe(document.documentElement,{childList:true,subtree:true}); } catch(e){}
+  } catch(e){}
+  true;
+})();
+`;
+
+// Light cosmetic cleanup for login-page WebViews (JS-on URI mode). Kept
+// separate from STRICT_MEDIA_BLOCK because login pages need <img> (CAPTCHAs,
+// profile pictures) to stay visible for authentication flows.
 const LOGIN_PAGE_CSS = `
 (function(){
   try {
@@ -97,6 +158,12 @@ export default function Home() {
   const [renderMode, setRenderMode] = useState<'none' | 'uri' | 'html'>('none');
 
   const webRef = useRef<WebView>(null);
+  // Sequence counter — only the LATEST openUrl invocation is allowed to
+  // write state.  Without this, a slow fetchCleanHtml() from a previous URL
+  // can land after the user has already tapped "New Tab" (which calls
+  // openUrl('')) and overwrite the blank state with stale content —
+  // exactly the "New Tab doesn't work" symptom reported in build #20.
+  const openSeq = useRef(0);
 
   useEffect(() => {
     hydrate();
@@ -112,16 +179,32 @@ export default function Home() {
   // Decide how to render a URL: uri (normal/trusted-lite/login) or html (UltraLite cleaner).
   const openUrl = useCallback(
     async (target: string) => {
+      // Bump sequence — anything older becomes stale.
+      const mySeq = ++openSeq.current;
+      const isCurrent = () => openSeq.current === mySeq;
+
       // Reject internal browser intermediate states.
       if (target === 'about:blank' || target.startsWith('about:')) {
         return;
       }
+      // New-Tab / Home reset — clear everything SYNCHRONOUSLY.
       if (!target) {
         setUrl('');
         setRenderMode('none');
         setHtmlContent('');
+        setPageTitle('');
+        setInput('');
+        setLoading(false);
+        setProgress(0);
+        setCanGoBack(false);
         return;
       }
+
+      // ── Unwrap DuckDuckGo redirect URLs (duckduckgo.com/l/?uddg=<real>)
+      //    so clicking a search result navigates to the actual article
+      //    instead of bouncing back to the DDG search box (build-#20 bug). ──
+      const unwrapped = unwrapDuckDuckGoRedirect(target);
+      const clickThrough = unwrapped || target;
 
       // ── Pure-Legacy URL mapping (UltraLite only) ──
       // Rewrite popular hosts to their lite/legacy endpoints (e.g.
@@ -131,7 +214,8 @@ export default function Home() {
       //   wikipedia.org → en.m.wikipedia.org,
       //   reddit.com    → old.reddit.com,
       //   google.com/search → ?gbv=1 basic-HTML SERP)
-      const finalTarget = ultraLite ? mapToLegacy(target) : target;
+      const finalTarget = ultraLite ? mapToLegacy(clickThrough) : clickThrough;
+      if (!isCurrent()) return;
       setUrl(finalTarget);
 
       // ── Mode selection ──
@@ -141,6 +225,7 @@ export default function Home() {
       //    WebView. Already lite-by-design; native forms / cookies preserved.
       // 4) UltraLite + everything else → HTML cleaner via fetchCleanHtml.
       if (!ultraLite || isLoginUrl(finalTarget) || isTrustedLite(finalTarget)) {
+        if (!isCurrent()) return;
         setRenderMode('uri');
         setHtmlContent('');
         return;
@@ -151,6 +236,7 @@ export default function Home() {
       // something right away on slow links. Then asynchronously fetch +
       // replace the HTML.
       const stub = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:16px;line-height:1.4;}body{padding:8px;}h2{margin:6px 0;font-size:18px;}p{margin:4px 0;}small{color:#666;font-size:12px;}</style></head><body><h2>Loading lite version…</h2><p>${finalTarget}</p><small>UltraLite · Pure Legacy mode · stripping scripts/styles/images for 64&nbsp;kbps. This may take a few seconds on slow links.</small></body></html>`;
+      if (!isCurrent()) return;
       setHtmlContent(stub);
       setRenderMode('html');
       setPageTitle(deriveTitle(finalTarget));
@@ -158,13 +244,18 @@ export default function Home() {
       setProgress(0.15);
       try {
         const clean = await fetchCleanHtml(finalTarget);
+        // GUARD: if the user has moved on (New Tab, another click) while
+        // fetchCleanHtml was in flight, do NOT clobber the newer state.
+        if (!isCurrent()) return;
         setHtmlContent(clean);
         addHistory(deriveTitle(finalTarget), finalTarget).catch(() => {});
       } catch {
         // fetchCleanHtml never throws (returns its own error stub) — keep stub.
       } finally {
-        setLoading(false);
-        setProgress(1);
+        if (isCurrent()) {
+          setLoading(false);
+          setProgress(1);
+        }
       }
     },
     [ultraLite]
@@ -543,12 +634,37 @@ export default function Home() {
                 onNavigationStateChange={onNav}
                 onShouldStartLoadWithRequest={(req) => {
                   const u = req.url || '';
-                  // Allow non-http schemes (about:blank, data:, file:, mailto:,
-                  // tel:, intent:) through — never intercept these.
-                  if (!u.startsWith('http')) return true;
+                  // Allow same-document / data URIs through — anything else
+                  // that isn't http(s) (intent:, mailto:, tel:, file:,
+                  // custom schemes) the Android WebView cannot resolve and
+                  // throws net::ERR_UNKNOWN_URL_SCHEME — so block them to
+                  // avoid the grey error page.  If a supported handler
+                  // exists (tel:, mailto:, sms:), we dispatch via Linking.
+                  if (!u || u === 'about:blank') return false;
+                  if (u.startsWith('about:') || u.startsWith('data:')) {
+                    return true;
+                  }
+                  if (!u.startsWith('http')) {
+                    if (
+                      u.startsWith('tel:') ||
+                      u.startsWith('mailto:') ||
+                      u.startsWith('sms:') ||
+                      u.startsWith('geo:')
+                    ) {
+                      Linking.openURL(u).catch(() => {});
+                    }
+                    return false;
+                  }
                   // Intercept downloads.
                   if (isDownloadUrl(u)) {
                     handleDownload(u);
+                    return false;
+                  }
+                  // Unwrap DuckDuckGo redirect links → open the real target
+                  // so we don't bounce back to the search page.
+                  const unwrappedDdg = unwrapDuckDuckGoRedirect(u);
+                  if (unwrappedDdg) {
+                    openUrl(unwrappedDdg);
                     return false;
                   }
                   // In pure-text (HTML) mode: re-fetch & filter on link clicks
@@ -580,10 +696,33 @@ export default function Home() {
                   }
                   return true;
                 }}
+                injectedJavaScriptBeforeContentLoaded={
+                  // Strict image / media block runs BEFORE any resource
+                  // load — protects us on mbasic.fb, m.yt, m.wiki,
+                  // lite.ddg, etc.  Skipped for login URLs where users
+                  // need to see captchas / profile photos.
+                  renderMode === 'uri' &&
+                  ultraLite &&
+                  !isLoginUrl(url)
+                    ? STRICT_MEDIA_BLOCK
+                    : ''
+                }
                 injectedJavaScript={
                   renderMode === 'uri' && ultraLite ? LOGIN_PAGE_CSS : ''
                 }
                 userAgent={ultraLite ? MOBILE_UA : undefined}
+                onError={(e) => {
+                  // Swallow ERR_UNKNOWN_URL_SCHEME / net errors instead of
+                  // showing Android's default grey "Webpage not available"
+                  // page.  We log for diagnostics.
+                  const nativeErr = e?.nativeEvent;
+                  if (nativeErr?.code === -10) {
+                    // ERR_UNKNOWN_URL_SCHEME — already handled above via
+                    // onShouldStartLoadWithRequest; nothing to do.
+                    return;
+                  }
+                  console.warn('[webview] err', nativeErr);
+                }}
               />
             )}
           </View>

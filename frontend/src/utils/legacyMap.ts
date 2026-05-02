@@ -96,9 +96,45 @@ const HOST_RULES: Record<string, Mapper> = {
   },
 };
 
+/** Decode a DuckDuckGo redirect URL (duckduckgo.com/l/?uddg=<encoded>&...)
+ *  into the real target URL.  Returns null if the input isn't a DDG redirect.
+ *  Without this, clicking any DDG result navigates to a redirect page, and
+ *  the legacy-mapper would send it back to the search box → infinite loop. */
+export function unwrapDuckDuckGoRedirect(rawUrl: string): string | null {
+  if (!rawUrl) return null;
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+    const isDdgRedirect =
+      (host === 'duckduckgo.com' ||
+        host === 'www.duckduckgo.com' ||
+        host === 'lite.duckduckgo.com' ||
+        host === 'html.duckduckgo.com') &&
+      (u.pathname === '/l/' ||
+        u.pathname === '/l' ||
+        u.pathname === '/y.js' ||
+        u.pathname.startsWith('/l/'));
+    if (!isDdgRedirect) return null;
+    const enc = u.searchParams.get('uddg') || u.searchParams.get('u');
+    if (!enc) return null;
+    try {
+      const real = decodeURIComponent(enc);
+      if (real.startsWith('http://') || real.startsWith('https://')) return real;
+    } catch {}
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Pure-legacy URL rewriter. Returns the input unchanged when no rule fires. */
 export function mapToLegacy(rawUrl: string): string {
   if (!rawUrl) return rawUrl;
+  // ── DuckDuckGo redirect unwrap (must run first so we never re-route the
+  //    click-through to the search box) ──
+  const unwrapped = unwrapDuckDuckGoRedirect(rawUrl);
+  if (unwrapped) return mapToLegacy(unwrapped);
+
   let u: URL;
   try {
     u = new URL(rawUrl);
