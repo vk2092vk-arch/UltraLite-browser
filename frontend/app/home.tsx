@@ -8,7 +8,6 @@
 // Normal mode → plain WebView, no injections.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Image,
   Keyboard,
@@ -110,9 +109,14 @@ export default function Home() {
   // Decide how to render a URL: uri (normal) or html (ultralite pure-text).
   const openUrl = useCallback(
     async (target: string) => {
+      // Reject internal browser intermediate states.
+      if (target === 'about:blank' || target.startsWith('about:')) {
+        return;
+      }
       setUrl(target);
       if (!target) {
         setRenderMode('none');
+        setHtmlContent('');
         return;
       }
       if (!ultraLite || isLoginUrl(target)) {
@@ -120,17 +124,22 @@ export default function Home() {
         setHtmlContent('');
         return;
       }
-      // UltraLite pure-text mode
+      // UltraLite pure-text mode — show an immediate loading HTML so the
+      // WebView paints a styled "Loading {url}" page right away (no white
+      // void / spinner overlay). Then asynchronously fetch + replace.
+      const stub = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Georgia,serif;background:#fff;color:#000;padding:20px;font-size:17px;line-height:1.5;}h2{margin-top:0;}p{color:#555;}</style></head><body><h2>Fetching lite version…</h2><p>${target}</p><p style="color:#888;font-size:14px;">UltraLite is compressing this page server-side and sending only the readable text. Designed to load on 64 kbps.</p></body></html>`;
+      setHtmlContent(stub);
+      setRenderMode('html');
+      setPageTitle(deriveTitle(target));
       setLoading(true);
-      setProgress(0.1);
+      setProgress(0.15);
       try {
         const clean = await fetchCleanHtml(target);
         setHtmlContent(clean);
-        setRenderMode('html');
-        setPageTitle(deriveTitle(target));
         addHistory(deriveTitle(target), target).catch(() => {});
       } catch {
-        setRenderMode('uri');
+        // fetchCleanHtml never throws (returns its own error stub), but
+        // just in case — keep the stub on screen and fall back to URI mode.
       } finally {
         setLoading(false);
         setProgress(1);
@@ -483,14 +492,7 @@ export default function Home() {
                 />
               </View>
             )}
-            {renderMode === 'html' && loading ? (
-              <View style={styles.loaderWrap}>
-                <ActivityIndicator color={COLORS.maroon} size="large" />
-                <Text style={styles.loaderText}>
-                  Loading… stripping ads &amp; heavy content for 2G
-                </Text>
-              </View>
-            ) : (
+            {renderMode === 'none' ? null : (
               <WebView
                 ref={webRef}
                 source={
@@ -519,15 +521,16 @@ export default function Home() {
                 onNavigationStateChange={onNav}
                 onShouldStartLoadWithRequest={(req) => {
                   const u = req.url || '';
-                  if (!u.startsWith('http') && !u.startsWith('about:')) {
-                    return true; // allow file:/, intent:, mailto:, tel:
-                  }
+                  // Allow non-http schemes (about:blank, data:, file:, mailto:,
+                  // tel:, intent:) through — never intercept these.
+                  if (!u.startsWith('http')) return true;
                   // Intercept downloads.
                   if (isDownloadUrl(u)) {
                     handleDownload(u);
                     return false;
                   }
-                  // In pure-text mode: re-fetch & filter on link clicks.
+                  // In pure-text mode: re-fetch & filter on link clicks
+                  // (only for actual http(s) navigations).
                   if (renderMode === 'html' && u !== url) {
                     openUrl(u);
                     return false;

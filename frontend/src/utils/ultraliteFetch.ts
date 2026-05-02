@@ -1,16 +1,17 @@
-// UltraLite HTML filter — fetches a URL in RN (no CORS) then returns a pure
-// B&W text HTML string with ALL scripts/styles/images/media stripped out.
-// Images become empty "X-box" placeholders. Designed for 64kbps 2G networks.
+// UltraLite text fetcher — uses r.jina.ai as a server-side rendering proxy.
+// r.jina.ai (free, no auth) accepts ANY URL and returns clean markdown of just
+// the article/page text — typically 5-30 KB instead of the original 1+ MB.
+// We then convert the markdown to a small HTML document with a B&W stylesheet
+// and render it in the WebView via source={{ html, baseUrl }}.
 //
-// Reference architecture: server-side rendered lightweight HTML (on-device).
-// The difference is we do it on-device in RN (still avoids downloading ads,
-// tracker scripts, fonts, images, videos).
+// Why not fetch + parse the original HTML ourselves?
+//   On a 64 kbps link the original HTML alone takes 30-120 s to download. Doing
+//   the heavy lifting on jina's CDN (which is fast & cached) means we only ever
+//   pull a small text payload — the whole point of an Opera-Mini-like browser.
 
-const MOBILE_UA =
-  'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+const PROXY_PREFIX = 'https://r.jina.ai/';
 
-// Login / auth URL patterns — these pages need JS + images to work properly.
-// In these cases we skip the pure-text filter and use a normal WebView.
+// Login / auth URL patterns — these need real JS + cookies, so skip the proxy.
 const LOGIN_RE =
   /\/(login|signin|sign-in|signup|sign-up|register|accounts\/login|accounts\/signup|auth|oauth|sso|identity|checkpoint|challenge|two_factor|verify|recover)(\/|$|\?|#)|login\.live\.com|accounts\.google\.com|\.facebook\.com\/login|\.instagram\.com\/accounts\/|passport\.|auth\./i;
 
@@ -19,198 +20,231 @@ export function isLoginUrl(url: string): boolean {
   return LOGIN_RE.test(url);
 }
 
-// Minimal B&W text-only stylesheet. `all: revert` strips site CSS; we then
-// set safe readable defaults on top.
-const BW_CSS = `
-<style id="__ul_core">
-  html, body { background:#fff !important; color:#000 !important; }
-  * {
-    color: #000 !important;
-    background: #fff !important;
-    background-image: none !important;
-    box-shadow: none !important;
-    text-shadow: none !important;
-    filter: none !important;
-    animation: none !important;
-    transition: none !important;
-    border-radius: 0 !important;
-  }
-  body {
-    font-family: Georgia, serif !important;
-    font-size: 17px !important;
-    line-height: 1.55 !important;
-    padding: 12px !important;
-    margin: 0 !important;
-    max-width: 100% !important;
-  }
-  h1, h2, h3, h4 { font-weight: 700 !important; margin: 14px 0 6px !important; }
-  h1 { font-size: 22px !important; }
-  h2 { font-size: 19px !important; }
-  h3, h4 { font-size: 17px !important; }
-  p, div, section, article, li { margin: 5px 0 !important; }
-  a, a:link { color: #000 !important; text-decoration: underline !important; }
-  a:visited { color: #555 !important; }
-  ul, ol { padding-left: 22px !important; margin: 6px 0 !important; }
-  hr { border: 0 !important; border-top: 1px solid #000 !important; margin: 10px 0 !important; }
-  blockquote { border-left: 3px solid #000 !important; padding-left: 10px !important; margin: 8px 0 !important; }
-  table { border-collapse: collapse !important; margin: 6px 0 !important; }
-  td, th { border: 1px solid #000 !important; padding: 4px 6px !important; }
-  form, fieldset { border: 0 !important; margin: 6px 0 !important; padding: 0 !important; }
-  input, textarea, select, button {
-    font-family: Georgia, serif !important;
-    font-size: 16px !important;
-    border: 1px solid #000 !important;
-    padding: 6px 8px !important;
-    background: #fff !important;
-    color: #000 !important;
-    margin: 2px 0 !important;
-    box-sizing: border-box !important;
-    max-width: 100% !important;
-  }
-  button, [type="submit"], [type="button"] {
-    background: #000 !important;
-    color: #fff !important;
-    cursor: pointer !important;
-    padding: 7px 14px !important;
-  }
-  /* X-box image placeholders */
-  .__ul_xbox {
-    display: inline-block !important;
-    width: 38px !important;
-    height: 38px !important;
-    border: 1px solid #000 !important;
-    text-align: center !important;
-    line-height: 34px !important;
-    color: #000 !important;
-    background: #fff !important;
-    font-size: 22px !important;
-    vertical-align: middle !important;
-    margin: 2px !important;
-    font-weight: bold !important;
-  }
-  /* Hide common clutter classes just in case */
-  [class*="cookie" i], [class*="consent" i], [class*="gdpr" i],
-  [class*="newsletter" i], [class*="popup" i], [id*="cookie" i],
-  [id*="gdpr" i], nav[class*="ad" i], [class*="advertisement" i] {
-    display: none !important;
-  }
+const BW_HEAD = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body { background:#fff; color:#000; margin:0; padding:0; }
+  body { font-family: Georgia, serif; font-size:17px; line-height:1.55; padding:14px; max-width:100%; word-wrap:break-word; overflow-wrap:break-word; }
+  h1,h2,h3,h4,h5,h6 { color:#000; margin:14px 0 6px; font-weight:700; }
+  h1{font-size:22px;} h2{font-size:19px;} h3,h4{font-size:17px;}
+  p { margin: 6px 0; }
+  a, a:link { color:#000; text-decoration:underline; word-break:break-all; }
+  a:visited { color:#555; }
+  ul,ol { padding-left:22px; margin:6px 0; }
+  li { margin:3px 0; }
+  hr { border:0; border-top:1px solid #000; margin:12px 0; }
+  blockquote { border-left:3px solid #000; padding-left:10px; margin:8px 0; color:#222; }
+  code { font-family: monospace; background:#eee; padding:1px 4px; border-radius:2px; font-size:15px; }
+  pre { background:#f4f4f4; padding:8px; overflow-x:auto; border-left:3px solid #000; font-size:14px; }
+  pre code { background:transparent; padding:0; }
+  table { border-collapse:collapse; margin:6px 0; }
+  td, th { border:1px solid #000; padding:3px 6px; }
+  .__ul_xbox { display:inline-block; width:38px; height:38px; border:1px solid #000; text-align:center; line-height:34px; color:#000; background:#fff; font-size:22px; vertical-align:middle; margin:2px; font-weight:700; text-decoration:none; }
+  .__ul_meta { color:#666; font-size:13px; padding:8px 0; border-bottom:1px solid #ddd; margin-bottom:10px; }
+  .__ul_actions { padding:10px 0; border-top:1px solid #ddd; margin-top:14px; font-size:14px; color:#444; }
+  .__ul_actions a { display:inline-block; padding:4px 10px; border:1px solid #000; margin-right:6px; }
 </style>
+</head>
+<body>
 `;
 
-const BW_HEADER_STRIP = `
-<style id="__ul_trim">
-  script, noscript, style, link[rel="stylesheet"], link[rel="preload"],
-  link[rel="prefetch"], meta[http-equiv="refresh"] { display: none !important; }
-</style>
-`;
-
-function stripTagBlocks(html: string, tag: string): string {
-  const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
-  return html.replace(re, '');
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
-function stripSelfClosing(html: string, tag: string): string {
-  const re = new RegExp(`<${tag}\\b[^>]*>`, 'gi');
-  return html.replace(re, '');
+// Tiny markdown → HTML converter. Handles the subset r.jina.ai actually emits.
+function md2html(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let inCode = false;
+  let codeLang = '';
+  let inList = false;
+  let listType: 'ul' | 'ol' | null = null;
+  let para: string[] = [];
+
+  const flushPara = () => {
+    if (para.length) {
+      out.push(`<p>${inlineMd(para.join(' '))}</p>`);
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (inList && listType) {
+      out.push(`</${listType}>`);
+      inList = false;
+      listType = null;
+    }
+  };
+
+  for (let raw of lines) {
+    if (inCode) {
+      if (/^```/.test(raw)) {
+        out.push('</code></pre>');
+        inCode = false;
+        codeLang = '';
+        continue;
+      }
+      out.push(escapeHtml(raw));
+      continue;
+    }
+    const line = raw.trim();
+    // Code fence
+    const fence = line.match(/^```(\w*)/);
+    if (fence) {
+      flushPara();
+      flushList();
+      codeLang = fence[1] || '';
+      out.push(`<pre><code data-lang="${codeLang}">`);
+      inCode = true;
+      continue;
+    }
+    // Empty line → paragraph break
+    if (!line) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    // Heading
+    const h = line.match(/^(#{1,6})\s+(.+)$/);
+    if (h) {
+      flushPara();
+      flushList();
+      const lvl = h[1].length;
+      out.push(`<h${lvl}>${inlineMd(h[2])}</h${lvl}>`);
+      continue;
+    }
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      flushPara();
+      flushList();
+      out.push('<hr>');
+      continue;
+    }
+    // Blockquote
+    if (line.startsWith('>')) {
+      flushPara();
+      flushList();
+      out.push(
+        `<blockquote>${inlineMd(line.replace(/^>\s?/, ''))}</blockquote>`
+      );
+      continue;
+    }
+    // Unordered list
+    const ul = line.match(/^[-*+]\s+(.+)$/);
+    if (ul) {
+      flushPara();
+      if (!inList || listType !== 'ul') {
+        flushList();
+        out.push('<ul>');
+        inList = true;
+        listType = 'ul';
+      }
+      out.push(`<li>${inlineMd(ul[1])}</li>`);
+      continue;
+    }
+    // Ordered list
+    const ol = line.match(/^\d+\.\s+(.+)$/);
+    if (ol) {
+      flushPara();
+      if (!inList || listType !== 'ol') {
+        flushList();
+        out.push('<ol>');
+        inList = true;
+        listType = 'ol';
+      }
+      out.push(`<li>${inlineMd(ol[1])}</li>`);
+      continue;
+    }
+    // Default → paragraph accumulator
+    flushList();
+    para.push(line);
+  }
+  flushPara();
+  flushList();
+  if (inCode) out.push('</code></pre>');
+  return out.join('\n');
 }
 
-/**
- * Strip everything heavy from raw HTML and add B&W text-only CSS.
- * Returns a ready-to-render HTML string.
- */
-export function filterHtml(rawHtml: string, baseUrl: string): string {
-  let html = rawHtml;
-
-  // 1. Remove entire blocks that carry JS/styling/media.
-  for (const tag of [
-    'script',
-    'noscript',
-    'style',
-    'iframe',
-    'video',
-    'audio',
-    'canvas',
-    'svg',
-    'picture',
-    'template',
-  ]) {
-    html = stripTagBlocks(html, tag);
-  }
-
-  // 2. Remove void tags that fetch binary resources.
-  for (const tag of ['source', 'track', 'embed', 'link']) {
-    html = stripSelfClosing(html, tag);
-  }
-
-  // 3. Replace every <img> / <object> / inline-svg with X-box placeholder.
+// Inline markdown: bold, italic, code, links, images.
+function inlineMd(s: string): string {
+  // Escape first, then re-introduce markdown tokens.
+  let html = escapeHtml(s);
+  // Images: ![alt](url) → X-box (we skip the actual image for bandwidth)
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt) => {
+    const safeAlt = String(alt).slice(0, 60);
+    return `<span class="__ul_xbox" title="${safeAlt}">×</span>`;
+  });
+  // Links: [text](url)
   html = html.replace(
-    /<img\b[^>]*alt=(["'])(.*?)\1[^>]*>/gi,
-    (_m, _q, alt) =>
-      `<span class="__ul_xbox" title="${String(alt || '').slice(0, 60)}">×</span>`
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    (_m, txt, href) => `<a href="${href}">${txt}</a>`
   );
-  html = html.replace(
-    /<img\b[^>]*>/gi,
-    '<span class="__ul_xbox" title="image">×</span>'
-  );
-  html = html.replace(
-    /<object\b[\s\S]*?<\/object>/gi,
-    '<span class="__ul_xbox">×</span>'
-  );
-
-  // 4. Strip all inline event handlers (onclick, onload, etc.).
-  html = html.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '');
-  html = html.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '');
-  html = html.replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '');
-
-  // 5. Strip `style=""` attributes (rely on our injected CSS).
-  html = html.replace(/\sstyle\s*=\s*"[^"]*"/gi, '');
-  html = html.replace(/\sstyle\s*=\s*'[^']*'/gi, '');
-
-  // 6. Inject our <base> + B&W CSS into <head>.
-  const headInject = `<base href="${baseUrl}">${BW_HEADER_STRIP}${BW_CSS}`;
-  if (/<head\b[^>]*>/i.test(html)) {
-    html = html.replace(/<head\b[^>]*>/i, (m) => `${m}${headInject}`);
-  } else if (/<html\b[^>]*>/i.test(html)) {
-    html = html.replace(
-      /<html\b[^>]*>/i,
-      (m) => `${m}<head>${headInject}</head>`
-    );
-  } else {
-    html = `<html><head>${headInject}</head><body>${html}</body></html>`;
-  }
-
+  // Bold **text**
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Italic *text* (avoid clashing with already-converted strong)
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  // Inline code `code`
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
   return html;
 }
 
 /**
- * Fetches a URL via RN fetch (no CORS limits) and returns a filtered B&W HTML
- * string ready to pass to WebView's `source={{ html, baseUrl }}`.
- * Times out after ~10s to avoid hanging on slow 2G connections.
+ * Fetch a URL via r.jina.ai (text-only proxy) and return a styled B&W HTML
+ * document ready for source={{ html, baseUrl }}. Falls back gracefully on
+ * proxy failure with a user-actionable error page.
  */
 export async function fetchCleanHtml(url: string): Promise<string> {
+  const proxied = `${PROXY_PREFIX}${url}`;
   const ctrl = new AbortController();
   const tm = setTimeout(() => ctrl.abort(), 12000);
+  let body = '';
+  let title = '';
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': MOBILE_UA,
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.8',
-      },
+    const res = await fetch(proxied, {
       signal: ctrl.signal,
+      headers: {
+        Accept: 'text/plain, text/markdown, */*',
+        'X-Return-Format': 'markdown',
+      },
     });
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('text/html') && !ct.includes('application/xhtml')) {
-      // Not HTML (PDF, image, etc.) — return a minimal stub.
-      return `<html><head>${BW_CSS}</head><body><p>Non-HTML resource at <a href="${url}">${url}</a>.</p></body></html>`;
+    if (!res.ok) {
+      throw new Error(`Proxy returned ${res.status}`);
     }
-    const raw = await res.text();
-    return filterHtml(raw, url);
+    const md = await res.text();
+    // r.jina.ai output convention: starts with "Title:" / "URL Source:" headers.
+    const titleMatch = md.match(/^Title:\s*(.+)$/m);
+    if (titleMatch) title = titleMatch[1].trim();
+    // Strip the leading meta block (Title:, URL Source:, Markdown Content:).
+    const stripped = md
+      .replace(/^Title:.*$/m, '')
+      .replace(/^URL Source:.*$/m, '')
+      .replace(/^Markdown Content:\s*/m, '')
+      .replace(/^Published Time:.*$/m, '')
+      .trim();
+    body = md2html(stripped);
   } catch (e: any) {
-    const msg = e?.message || String(e);
-    return `<html><head>${BW_CSS}</head><body><h3>Couldn't load page</h3><p>${msg}</p><p><a href="${url}">Open ${url} in Normal mode</a>.</p></body></html>`;
+    const msg = e?.name === 'AbortError' ? 'Request timed out' : e?.message || 'Proxy error';
+    body = `
+      <h2>Couldn't load this page in UltraLite</h2>
+      <p>${escapeHtml(msg)} — the lite proxy didn't respond fast enough.</p>
+      <p><a href="${escapeHtml(url)}">Open ${escapeHtml(url)}</a> in this same window (UltraLite will retry), or switch to <strong>Normal mode</strong> from the toggle at the top.</p>
+    `;
   } finally {
     clearTimeout(tm);
   }
+  const titleHtml = title ? `<h1>${escapeHtml(title)}</h1>` : '';
+  const meta = `<div class="__ul_meta">UltraLite mode · ${escapeHtml(
+    new URL(url).hostname
+  )}</div>`;
+  const footer = `<div class="__ul_actions"><a href="${escapeHtml(
+    url
+  )}">Open original</a> Switch to Normal mode for full version.</div>`;
+  return `${BW_HEAD}${meta}${titleHtml}${body}${footer}</body></html>`;
 }

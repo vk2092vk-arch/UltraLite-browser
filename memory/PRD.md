@@ -21,6 +21,38 @@ Android mobile browser app (React Native / Expo SDK 54). Two modes: Normal + Ult
 - AdMob & Play Store policy compliance
 - Per-channel radio favorites
 
+## Session 5 Log (2026-01) — CRITICAL FIX: True 64kbps engine via r.jina.ai proxy
+
+User reported (after testing latest APK): UltraLite still stuck on "Loading…" forever even on full speed internet. URL bar showed "about:blank". Root cause: 2 critical bugs.
+
+### Critical bugs found
+
+**Bug #1 — `about:blank` infinite loop**
+WebView always briefly renders "about:blank" when mounting `source={{ html, baseUrl }}`. My `onShouldStartLoadWithRequest` was treating `about:blank` as a real URL → calling `openUrl('about:blank')` → fetch failed → re-render with stub HTML containing the url → about:blank loops forever. **Fix**: explicitly skip non-http schemes from interception and reject `about:blank` at openUrl entry.
+
+**Bug #2 — Wrong architecture for true 64kbps**
+Session 3-4 used on-device fetch+strip of full HTML. But original site HTML is itself often 1-3 MB → at 64 kbps that's a 2-6 minute download BEFORE we even strip. So "Loading…" was technically correct but cripplingly slow. The ENTIRE point of Opera Mini / Facebook Basic was that the heavy lifting happens on a fast cloud server, not on the slow client.
+
+**Fix**: Switched to `r.jina.ai` reader-proxy. Hits the proxy with the target URL, server fetches + strips + returns ~10-30 KB clean **markdown** (vs 1-3 MB original HTML). At 64 kbps that's a 1-4s load — finally rocket speed. We then convert the markdown to a styled B&W HTML page on-device with a tiny in-app markdown→HTML converter (~120 lines of regex).
+
+### Implementation (`src/utils/ultraliteFetch.ts` rewritten)
+- POST `https://r.jina.ai/{url}` → markdown body
+- Markdown→HTML converter handles: headings (h1-h6), bold, italic, code, links, images→X-box, lists (ul/ol), blockquotes, hr, paragraphs, fenced code blocks
+- Output HTML wrapped in B&W stylesheet (Georgia serif, black-on-white, no colors/shadows/animations)
+- 12s timeout with friendly error page + "Open in Normal mode" hint
+- Login URLs (Facebook/Instagram/Google accounts/etc.) bypass the proxy and use normal WebView
+
+### UX improvement (`app/home.tsx`)
+- **Removed full-screen loading overlay**. WebView now mounts INSTANTLY with a small "Fetching lite version… {url}" stub HTML, then asynchronously updates content when the proxy responds. Users always see SOMETHING immediately, never a blank "Loading…" page.
+- Progress bar at top still shows during fetch.
+- `about:blank` and any non-http scheme now correctly pass through `onShouldStartLoadWithRequest`.
+
+### Files changed (Session 5)
+- `/app/frontend/src/utils/ultraliteFetch.ts` (rewritten — proxy + markdown→HTML)
+- `/app/frontend/app/home.tsx` (instant-stub render + about:blank guards)
+
+---
+
 ## Session 4 Log (2026-01) — Browser UI redesign + Radio auto-unlock + Banner reliability
 
 User reported (based on APK from Session 2 build, pre-pure-text engine):
