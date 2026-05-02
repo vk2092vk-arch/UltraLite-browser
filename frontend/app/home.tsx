@@ -47,6 +47,7 @@ import {
 import { trackClick } from '../src/ads/AdManager';
 import { isDownloadUrl, downloadFile } from '../src/utils/downloads';
 import { fetchCleanHtml, isLoginUrl } from '../src/utils/ultraliteFetch';
+import { mapToLegacy, isTrustedLite } from '../src/utils/legacyMap';
 
 // Chrome-Android mobile UA so sites serve their lightweight mobile build.
 const MOBILE_UA =
@@ -106,40 +107,59 @@ export default function Home() {
 
   const ultraLite = state.hydrated ? state.ultraLite : getUltraLite();
 
-  // Decide how to render a URL: uri (normal) or html (ultralite pure-text).
+  // Decide how to render a URL: uri (normal/trusted-lite/login) or html (UltraLite cleaner).
   const openUrl = useCallback(
     async (target: string) => {
       // Reject internal browser intermediate states.
       if (target === 'about:blank' || target.startsWith('about:')) {
         return;
       }
-      setUrl(target);
       if (!target) {
+        setUrl('');
         setRenderMode('none');
         setHtmlContent('');
         return;
       }
-      if (!ultraLite || isLoginUrl(target)) {
+
+      // ── Pure-Legacy URL mapping (UltraLite only) ──
+      // Rewrite popular hosts to their lite/legacy endpoints (e.g.
+      //   facebook.com → mbasic.facebook.com,
+      //   instagram.com → instagram.com/accounts/login/?force_classic=1,
+      //   youtube.com   → m.youtube.com,
+      //   wikipedia.org → en.m.wikipedia.org,
+      //   reddit.com    → old.reddit.com,
+      //   google.com/search → ?gbv=1 basic-HTML SERP)
+      const finalTarget = ultraLite ? mapToLegacy(target) : target;
+      setUrl(finalTarget);
+
+      // ── Mode selection ──
+      // 1) Normal mode → URI WebView, full JS.
+      // 2) UltraLite + login URL → URI WebView, JS on (auth flows need JS).
+      // 3) UltraLite + trusted-lite host (mbasic.fb, m.wiki, lite.ddg…) → URI
+      //    WebView. Already lite-by-design; native forms / cookies preserved.
+      // 4) UltraLite + everything else → HTML cleaner via fetchCleanHtml.
+      if (!ultraLite || isLoginUrl(finalTarget) || isTrustedLite(finalTarget)) {
         setRenderMode('uri');
         setHtmlContent('');
         return;
       }
-      // UltraLite pure-text mode — show an immediate loading HTML so the
-      // WebView paints a styled "Loading {url}" page right away (no white
-      // void / spinner overlay). Then asynchronously fetch + replace.
-      const stub = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Georgia,serif;background:#fff;color:#000;padding:20px;font-size:17px;line-height:1.5;}h2{margin-top:0;}p{color:#555;}</style></head><body><h2>Fetching lite version…</h2><p>${target}</p><p style="color:#888;font-size:14px;">UltraLite is compressing this page server-side and sending only the readable text. Designed to load on 64 kbps.</p></body></html>`;
+
+      // UltraLite pure-text mode — show an immediate styled "Loading" page
+      // (same Pure-Legacy CSS as the cleaned page) so the WebView paints
+      // something right away on slow links. Then asynchronously fetch +
+      // replace the HTML.
+      const stub = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:16px;line-height:1.4;}body{padding:8px;}h2{margin:6px 0;font-size:18px;}p{margin:4px 0;}small{color:#666;font-size:12px;}</style></head><body><h2>Loading lite version…</h2><p>${finalTarget}</p><small>UltraLite · Pure Legacy mode · stripping scripts/styles/images for 64&nbsp;kbps. This may take a few seconds on slow links.</small></body></html>`;
       setHtmlContent(stub);
       setRenderMode('html');
-      setPageTitle(deriveTitle(target));
+      setPageTitle(deriveTitle(finalTarget));
       setLoading(true);
       setProgress(0.15);
       try {
-        const clean = await fetchCleanHtml(target);
+        const clean = await fetchCleanHtml(finalTarget);
         setHtmlContent(clean);
-        addHistory(deriveTitle(target), target).catch(() => {});
+        addHistory(deriveTitle(finalTarget), finalTarget).catch(() => {});
       } catch {
-        // fetchCleanHtml never throws (returns its own error stub), but
-        // just in case — keep the stub on screen and fall back to URI mode.
+        // fetchCleanHtml never throws (returns its own error stub) — keep stub.
       } finally {
         setLoading(false);
         setProgress(1);
@@ -479,7 +499,7 @@ export default function Home() {
             <Text style={styles.modeHint}>
               Mode:{' '}
               <Text style={{ color: COLORS.maroon, fontWeight: '700' }}>
-                {ultraLite ? 'UltraLite (Pure Text)' : 'Normal'}
+                {ultraLite ? 'UltraLite (Pure Legacy · 64 kbps)' : 'Normal'}
               </Text>
             </Text>
           </ScrollView>
@@ -529,11 +549,32 @@ export default function Home() {
                     handleDownload(u);
                     return false;
                   }
-                  // In pure-text mode: re-fetch & filter on link clicks
+                  // In pure-text (HTML) mode: re-fetch & filter on link clicks
                   // (only for actual http(s) navigations).
                   if (renderMode === 'html' && u !== url) {
                     openUrl(u);
                     return false;
+                  }
+                  // In URI mode + UltraLite: reroute cross-host clicks so
+                  // they get legacy-mapped + lite-cleaned. Same-host clicks
+                  // (mbasic.fb internal nav, lite.ddg internal nav) pass
+                  // through natively for cookies + form posts.
+                  if (
+                    renderMode === 'uri' &&
+                    ultraLite &&
+                    u !== url &&
+                    !isLoginUrl(u)
+                  ) {
+                    try {
+                      const fromHost = new URL(url).hostname;
+                      const toHost = new URL(u).hostname;
+                      if (fromHost !== toHost) {
+                        openUrl(u);
+                        return false;
+                      }
+                    } catch {
+                      /* ignore — let it through */
+                    }
                   }
                   return true;
                 }}
