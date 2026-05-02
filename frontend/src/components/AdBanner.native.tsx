@@ -54,12 +54,15 @@ const AdBanner: React.FC<Props> = ({ testID }) => {
 const styles = StyleSheet.create({
   container: {
     width: '100%',
+    minHeight: 60, // reserve banner space — keeps layout stable & ad visible
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E2DDDF',
   },
   placeholder: {
-    height: 50,
+    minHeight: 50,
   },
 });
 

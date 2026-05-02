@@ -97,13 +97,90 @@ export async function searchStations(opts: SearchOpts = {}): Promise<Station[]> 
     // Hard client-side cap (some servers ignore bitrateMax) and drop any
     // station with zero / negative bitrate (catalog noise — those streams
     // are unreliable and cause buffering loops).
-    return data.filter(
+    const filtered = data.filter(
       (s) => s.bitrate > 0 && s.bitrate <= cap && !!s.url_resolved
     );
+    if (filtered.length > 0 || !opts.query) return filtered;
+    // ── Fallback search ───────────────────────────────────────────────
+    // Strict `name` match on radio-browser is case-insensitive but
+    // requires a literal substring — searches like "92.7 FM", "FM 95",
+    // "Mirchi 98.3" frequently return 0 hits because catalog station
+    // names rarely embed the exact frequency string.  Run a fuzzy
+    // fallback: split into tokens, drop "fm"/"radio"/numbers, and try
+    // each remaining token as both a name match AND a tag match. First
+    // non-empty result wins.
+    const tokens = opts.query
+      .toLowerCase()
+      .split(/[\s\-_/]+/)
+      .map((t) => t.replace(/[^a-z0-9]/g, ''))
+      .filter(Boolean)
+      .filter((t) => t !== 'fm' && t !== 'radio' && !/^\d+(\.\d+)?$/.test(t));
+    for (const token of tokens) {
+      const hits = await fuzzyHelper(host, token, {
+        cap,
+        floor,
+        country: opts.country,
+        language: opts.language,
+        tag,
+      });
+      if (hits.length > 0) return hits;
+    }
+    // Last-ditch tag fallback on the original query string.
+    const tagHits = await searchByTag(opts.query, {
+      maxBitrate: cap,
+      minBitrate: floor,
+      limit: opts.limit ?? 40,
+    });
+    return tagHits;
   } catch (e) {
     console.warn('[radio] search err', e);
     return [];
   }
+}
+
+// Internal helper for searchStations fallback (name OR tag match for one
+// token).  Kept unexported — callers should use searchStations or
+// searchByTag directly.
+async function fuzzyHelper(
+  host: string,
+  token: string,
+  ctx: {
+    cap: number;
+    floor: number;
+    country?: string;
+    language?: string;
+    tag?: string;
+  }
+): Promise<Station[]> {
+  const tryFetch = async (key: 'name' | 'tag') => {
+    const p = new URLSearchParams();
+    p.set('hidebroken', 'true');
+    p.set('order', 'votes');
+    p.set('reverse', 'true');
+    p.set('limit', '40');
+    p.set('bitrateMax', String(ctx.cap));
+    p.set('bitrateMin', String(ctx.floor));
+    p.set(key, token);
+    if (ctx.country) p.set('country', ctx.country);
+    if (ctx.language) p.set('language', ctx.language.toLowerCase());
+    if (ctx.tag && key === 'name') p.set('tag', ctx.tag);
+    try {
+      const r = await fetch(
+        `${host}/json/stations/search?${p.toString()}`,
+        { headers: COMMON_HEADERS }
+      );
+      if (!r.ok) return [];
+      const d: Station[] = await r.json();
+      return d.filter(
+        (s) => s.bitrate > 0 && s.bitrate <= ctx.cap && !!s.url_resolved
+      );
+    } catch {
+      return [];
+    }
+  };
+  const byName = await tryFetch('name');
+  if (byName.length > 0) return byName;
+  return tryFetch('tag');
 }
 
 // Search by tag (for regional/state filters like Punjab, Kashmir, Bollywood).

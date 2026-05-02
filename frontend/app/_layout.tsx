@@ -73,11 +73,11 @@ export default function RootLayout() {
                   images are stripped on the device to save bandwidth on 64
                   kbps networks. This is a data-saver, not an ad blocker —
                   in-app advertising remains fully functional.{'\n'}
-                  • Radio streams are sourced from the public open community
-                  catalog <Text style={styles.bold}>radio-browser.info</Text>{' '}
-                  and are owned & hosted by their respective broadcasters.
-                  UltraLite does not host, transcode or re-broadcast any
-                  audio. Tap a station to play; close the app to stop.
+                  • Radio streams are sourced from public open
+                  third-party radio provider catalogs and are owned &
+                  hosted by their respective broadcasters. UltraLite does
+                  not host, transcode or re-broadcast any audio. Tap a
+                  station to play; close the app to stop.
                 </Text>
               </ScrollView>
               <Pressable

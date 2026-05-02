@@ -110,8 +110,8 @@ export default function Settings() {
             This is a <Text style={styles.aboutBold}>data-saver</Text>, not
             an ad blocker — in-app advertising remains fully functional.
             {'\n\n'}
-            Radio is an open-directory player powered by the community
-            catalog <Text style={styles.aboutBold}>radio-browser.info</Text>
+            Radio is an open-directory player powered by curated{' '}
+            <Text style={styles.aboutBold}>third-party radio providers</Text>
             , filtered to ≤ 64 kbps for low-bandwidth use. Streams are owned
             and hosted by their respective broadcasters; UltraLite does not
             host, transcode or re-broadcast any audio.{'\n\n'}

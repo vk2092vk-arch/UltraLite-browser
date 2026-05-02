@@ -1,6 +1,7 @@
 // Radio & Music — categories, country/language filter, search, 64kbps strict.
-// Reward Ad gate: PER-CHANNEL — each station requires its own rewarded ad to
-// unlock 30-min playback. Other stations remain locked independently.
+// Reward Ad gate: GLOBAL — the user watches 2 rewarded ads (or 10 retries on
+// slow links) to unlock ALL stations for 30 minutes. Per-station gating was
+// retired in build #20 as an AdMob policy hardening measure.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -222,7 +223,13 @@ export default function Radio() {
         if (sound) {
           await sound.unloadAsync().catch(() => {});
         }
-        const { sound: snd } = await Audio.Sound.createAsync(
+        // Race the createAsync against a 15-second timeout — broken
+        // streams on radio-browser.info silently hang here, leaving the
+        // user staring at a frozen "Loading…" hourglass.  Bail out
+        // cleanly and surface a "too slow" hint instead.
+        const STREAM_TIMEOUT_MS = 15000;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const createPromise = Audio.Sound.createAsync(
           { uri: s.url_resolved || s.url },
           {
             shouldPlay: true,
@@ -250,15 +257,40 @@ export default function Radio() {
             setBuffering(!!status.isBuffering && !status.isPlaying);
           }
         );
-        setSound(snd);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('STREAM_TIMEOUT')),
+            STREAM_TIMEOUT_MS
+          );
+        });
+        let createdSound: Audio.Sound | null = null;
+        try {
+          const { sound: snd } = await Promise.race([
+            createPromise,
+            timeoutPromise,
+          ]);
+          createdSound = snd;
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+        if (!createdSound) throw new Error('NO_SOUND');
+        setSound(createdSound);
         setPlaying(s);
         reportClick(s.stationuuid).catch(() => {});
         trackClick();
-      } catch (e) {
+      } catch (e: any) {
         console.warn('[radio] play err', e);
         setBuffering(false);
+        // Best-effort: if a Sound got created but timed out, dispose it.
+        try {
+          await sound?.unloadAsync();
+        } catch {}
+        const isTimeout = e?.message === 'STREAM_TIMEOUT';
         alert(
-          'Stream failed to start. The broadcaster may be offline or your link is too slow — try a lower-bitrate station (32-48 kbps).'
+          isTimeout
+            ? 'This station is too slow to start (≥ 15 s with no audio).\n' +
+                'Try a different station or check your connection — the broadcaster may be offline.'
+            : 'Stream failed to start. The broadcaster may be offline or your link is too slow — try a lower-bitrate station (32-48 kbps).'
         );
       } finally {
         setBusyStation(null);
@@ -339,65 +371,68 @@ export default function Radio() {
   const adsRequired = state.radioAdsRequired;
   const adsToGo = Math.max(0, adsRequired - adsWatched);
 
-  const renderItem = ({ item }: { item: Station }) => {
-    const isPlaying = playing?.stationuuid === item.stationuuid;
-    const isBusy = busyStation === item.stationuuid;
-    const isFav = favUuids.has(item.stationuuid);
-    return (
-      <Pressable
-        testID={`station-${item.stationuuid}`}
-        onPress={() => (isPlaying ? stop() : playStation(item))}
-        style={[styles.stationCard, isPlaying && styles.stationPlaying]}
-      >
-        <View
-          style={[
-            styles.stationIcon,
-            !radioUnlocked && styles.stationIconLocked,
-          ]}
-        >
-          <Ionicons
-            name={
-              isBusy
-                ? 'hourglass'
-                : isPlaying
-                ? 'pause'
-                : radioUnlocked
-                ? 'play'
-                : 'lock-closed'
-            }
-            size={20}
-            color="#fff"
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.stationName} numberOfLines={1}>
-            {item.name.trim() || 'Untitled'}
-          </Text>
-          <Text style={styles.stationMeta} numberOfLines={1}>
-            {item.country || '—'} • {item.bitrate}kbps •{' '}
-            {item.codec || 'audio'}
-            {item.language ? ` • ${item.language}` : ''}
-          </Text>
-        </View>
+  const renderItem = useCallback(
+    ({ item }: { item: Station }) => {
+      const isPlaying = playing?.stationuuid === item.stationuuid;
+      const isBusy = busyStation === item.stationuuid;
+      const isFav = favUuids.has(item.stationuuid);
+      return (
         <Pressable
-          hitSlop={10}
-          onPress={(e) => {
-            e.stopPropagation?.();
-            toggleFavorite(item);
-          }}
-          style={styles.favBtn}
-          testID={`station-fav-${item.stationuuid}`}
+          testID={`station-${item.stationuuid}`}
+          onPress={() => (isPlaying ? stop() : playStation(item))}
+          style={[styles.stationCard, isPlaying && styles.stationPlaying]}
         >
-          <Ionicons
-            name={isFav ? 'heart' : 'heart-outline'}
-            size={22}
-            color={isFav ? COLORS.maroon : COLORS.textMuted}
-          />
+          <View
+            style={[
+              styles.stationIcon,
+              !radioUnlocked && styles.stationIconLocked,
+            ]}
+          >
+            <Ionicons
+              name={
+                isBusy
+                  ? 'hourglass'
+                  : isPlaying
+                  ? 'pause'
+                  : radioUnlocked
+                  ? 'play'
+                  : 'lock-closed'
+              }
+              size={20}
+              color="#fff"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.stationName} numberOfLines={1}>
+              {item.name.trim() || 'Untitled'}
+            </Text>
+            <Text style={styles.stationMeta} numberOfLines={1}>
+              {item.country || '—'} • {item.bitrate}kbps •{' '}
+              {item.codec || 'audio'}
+              {item.language ? ` • ${item.language}` : ''}
+            </Text>
+          </View>
+          <Pressable
+            hitSlop={10}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              toggleFavorite(item);
+            }}
+            style={styles.favBtn}
+            testID={`station-fav-${item.stationuuid}`}
+          >
+            <Ionicons
+              name={isFav ? 'heart' : 'heart-outline'}
+              size={22}
+              color={isFav ? COLORS.maroon : COLORS.textMuted}
+            />
+          </Pressable>
+          {isBusy && <ActivityIndicator color={COLORS.maroon} />}
         </Pressable>
-        {isBusy && <ActivityIndicator color={COLORS.maroon} />}
-      </Pressable>
-    );
-  };
+      );
+    },
+    [playing, busyStation, favUuids, radioUnlocked, stop, playStation, toggleFavorite]
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -558,14 +593,19 @@ export default function Radio() {
           ListFooterComponent={
             category !== 'favorites' ? (
               <Text style={styles.attribution}>
-                Streams from radio-browser.info — owned & hosted by their
-                broadcasters. UltraLite does not host any audio.
+                Streams sourced from third-party radio providers — owned &
+                hosted by their broadcasters. UltraLite does not host any
+                audio.
               </Text>
             ) : null
           }
         />
       )}
 
+      {/* Now-Playing bar — fixed-height (44px) so first-time appearance
+          doesn't visibly shift the list above. Combined with the
+          appState 30-s tick fix and memoised renderItem, this kills the
+          "radio screen flutter" reported in build #21. */}
       {playing && (
         <View style={styles.nowPlaying} testID="now-playing-bar">
           {buffering ? (
@@ -895,6 +935,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.maroon,
     paddingHorizontal: SPACING.md,
     paddingVertical: 10,
+    height: 44,
   },
   npDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#4ade80' },
   npText: { color: '#fff', flex: 1, fontWeight: FONT.weight.semibold },

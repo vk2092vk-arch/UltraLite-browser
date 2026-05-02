@@ -163,11 +163,16 @@ export function useAppState() {
       listeners.delete(l);
     };
   }, []);
-  // Tick every 30 s so the on-screen timer updates without user input.
+  // Tick every 30 s ONLY while the radio unlock window is active so the
+  // visible countdown stays current.  When the radio is locked there's
+  // nothing time-dependent on screen, so the interval is skipped — this
+  // eliminates the 30-second "flutter" the FlatList exhibited on the
+  // Radio tab while the user was browsing locked stations.
   useEffect(() => {
+    if (!isRadioUnlocked()) return;
     const id = setInterval(() => set({}), 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [_radioUnlockExp]);
   return {
     ultraLite: _ultraLite,
     hydrated: _hydrated,

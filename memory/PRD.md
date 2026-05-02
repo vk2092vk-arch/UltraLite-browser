@@ -157,28 +157,28 @@ User reported: "UltraLite and Chrome looked identical, images blurred wasn't eno
 - [x] Session 1: Build fix (worklets 0.8.1) · tablet/landscape · per-channel rewarded · banners per screen
 - [x] Session 2: Initial data-saver (blur/ad-block) · Downloads feature · chip text fix
 - [x] Session 3: **True pure-text engine** · **radio favorites + regional India** · **home apps grid** · **history by date + multi-select** · **interstitial 10/15** · **AppState-driven App Open** · Opera Mini branding removed
+- [x] Session 4: Pure-Legacy URL mapping · Indian FM roster · Global Radio Unlock (2-ad / 30-min + 10-retry network grant) · 64kbps strict cap · AAC codec preference
+- [x] Session 5 (2026-02): **9-bug build #21 fixes** — Strict image/media block (injectedJavaScriptBeforeContentLoaded) · Aggressive junk-strip · New-Tab race-condition guard (openSeq) · DDG redirect unwrap · radio screen flutter (memoised renderItem + 30-s tick gated on unlock) · radio search fuzzy fallback (token-split + tag) · 15-s stream timeout · white-label "third-party radio providers" · banner ad min-height 60 + border
 
 ## Next Action Items
 1. **Click "Save to Github"** → Actions auto-builds APK + AAB.
 2. Download artifacts, install on real Android phone + tablet.
-3. Real-device tests:
-   - Open any news site in UltraLite → should render as plain B&W text with X-boxes instead of images, ads/banners gone
-   - Open instagram.com in UltraLite → detects login, shows proper login form (not raw markdown anymore)
-   - Home → long-press Instagram tile → Delete works
-   - Home → tap "+" → add "Quora" / `quora.com` → new tile appears
-   - Radio → tap ❤ on 3 stations → switch to "❤ Favs" tab → all 3 appear offline
-   - Radio filters → scroll to "India regional" → tap "Punjab / Punjabi" → list updates
-   - History → long-press an item → multi-select N items → trash icon → confirm → gone
-   - Background app → return → App Open ad fires reliably
+3. Build #21 verification:
+   - UltraLite + facebook.com → mbasic.fb opens, NO images load (X-marks only)
+   - UltraLite + DDG search → tapping a result opens the real article (no loop)
+   - Radio → search "92.7 FM" → results appear (token-split fallback)
+   - Radio → tap a known-broken station → "too slow" alert within 15 s
+   - Radio → start a station → list above doesn't visibly shift
+   - Radio → wait 60 s on locked screen → no flutter / re-render
+   - Banner ads → visible on Home, Radio, Settings, Bookmarks, History, Downloads
+   - Settings/About → no "radio-browser.info" anywhere; says "third-party radio providers"
+4. Tap **New Tab** in menu while a slow page is loading → home appears, stale fetch cannot overwrite
 
-## Files changed (Session 3)
-- `/app/frontend/app/home.tsx` (full rewrite)
-- `/app/frontend/app/radio.tsx` (favorites + region)
-- `/app/frontend/app/history.tsx` (full rewrite)
-- `/app/frontend/app/settings.tsx` (copy cleanup)
-- `/app/frontend/app/index.tsx` (splash timing)
-- `/app/frontend/src/utils/ultraliteFetch.ts` (NEW — engine)
-- `/app/frontend/src/storage/db.ts` (shortcuts + favorites tables)
-- `/app/frontend/src/services/radioBrowser.ts` (searchByTag + regional tags + strict bitrate)
-- `/app/frontend/src/constants/ads.ts` (10/15 rule)
-- `/app/frontend/src/ads/AdManager.native.ts` (AppState listener)
+## Files changed (Session 5)
+- `/app/frontend/app/home.tsx` (Linking import added; STRICT_MEDIA_BLOCK already in place)
+- `/app/frontend/app/radio.tsx` (memoised renderItem · 15-s timeout · attribution white-labeled · fixed bar height)
+- `/app/frontend/app/settings.tsx` (white-label "third-party radio providers")
+- `/app/frontend/app/_layout.tsx` (white-label disclaimer)
+- `/app/frontend/src/services/radioBrowser.ts` (fuzzyHelper + token-split + tag fallback)
+- `/app/frontend/src/state/appState.ts` (30-s tick gated on `isRadioUnlocked()`)
+- `/app/frontend/src/components/AdBanner.native.tsx` (minHeight 60, border, prevents 0-height collapse)
