@@ -190,3 +190,36 @@ agent_communication:
         clean (verified via `tsc --noEmit`; only pre-existing AdBanner
         platform-resolution warnings remain — unrelated to these changes).
         User will save-to-GitHub which triggers GitHub Actions APK build.
+
+    - agent: "main"
+      message: |
+        Build #19 — AdMob/Play Console policy hardening + Indian FM roster.
+        Files touched:
+          • app/_layout.tsx — Disclaimer rewritten. Removed "ads and
+            trackers are blocked" (could mislead AdMob review). New
+            wording: "data-saver, not an ad blocker — in-app advertising
+            remains fully functional". Explicit attribution that radio
+            streams are owned & hosted by their broadcasters.
+          • app/settings.tsx — About text mirrored same wording. Removed
+            "ads/trackers blocked" claims.
+          • app/home.tsx — LOGIN_PAGE_CSS cleanup. Removed [class*="popup-ad"]
+            selector and the image blur/grayscale rules. Kept only
+            cookie/consent/GDPR banner hiding (universal UX, not ad-block).
+          • src/ads/AdManager.native.ts — Added App Open ad cooldown:
+            (a) skip if user was in background < 30 s (prevents accidental
+                fast-switch ad spam — AdMob policy red flag);
+            (b) min 4 min between two App Open shows (defensive frequency
+                cap on top of console settings).
+          • src/services/radioBrowser.ts — Added searchByName() helper +
+            INDIA_FM_FEATURED roster (20 stations: AIR FM Rainbow / Vividh
+            Bharati / FM Gold / Akashvani / city AIR stations + private
+            brands Mirchi, Big FM, Red FM, Radio City, Fever, Hello,
+            Suryan, My FM, Indigo, Club FM). All fetched live from
+            radio-browser.info — no hardcoded broadcaster URLs.
+          • app/radio.tsx — Added "🇮🇳 India FM" category that loads the
+            featured roster. Empty-state copy + footer attribution
+            ("Streams from radio-browser.info — owned & hosted by their
+            broadcasters. UltraLite does not host any audio.").
+        TS compile clean (only pre-existing AdBanner warnings, unrelated).
+        No testing agents invoked — user said app is working, don't break.
+        Ready for save-to-GitHub → GitHub Actions APK build #19.

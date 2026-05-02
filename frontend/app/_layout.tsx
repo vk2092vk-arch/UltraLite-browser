@@ -57,20 +57,27 @@ export default function RootLayout() {
         >
           <View style={styles.backdrop}>
             <View style={styles.card} testID="disclaimer-modal">
-              <Text style={styles.title}>Browsing Disclaimer</Text>
-              <ScrollView style={{ maxHeight: 220 }}>
+              <Text style={styles.title}>Browsing & Radio Disclaimer</Text>
+              <ScrollView style={{ maxHeight: 240 }}>
                 <Text style={styles.body}>
-                  This is a browsing utility designed for low-bandwidth
-                  (2G/64kbps) networks. The user is solely responsible for the
-                  content they search, view, or stream through this app.{'\n\n'}
-                  • No browsing data is sent to any server. All history,
-                  bookmarks and downloads are stored locally on your device.
-                  {'\n'}
-                  • Strict SafeSearch is enforced on all searches.{'\n'}
-                  • In UltraLite mode, ads and trackers are blocked and images
-                  are blurred to save data — tap an image to reveal it.{'\n'}
-                  • Radio streams are sourced from a public open directory
-                  (radio-browser.info) and are not hosted by UltraLite.
+                  UltraLite is a low-bandwidth browsing utility and an open
+                  directory player for community radio. It is the user's sole
+                  responsibility to comply with local laws while using the app.
+                  {'\n\n'}
+                  • <Text style={styles.bold}>No personal data leaves your device.</Text>{' '}
+                  History, bookmarks, downloads and radio favourites are stored
+                  only in local SQLite. UltraLite has no backend.{'\n'}
+                  • <Text style={styles.bold}>Strict SafeSearch</Text> is
+                  enforced on all searches.{'\n'}
+                  • In UltraLite (Pure Legacy) mode, scripts, heavy CSS and
+                  images are stripped on the device to save bandwidth on 64
+                  kbps networks. This is a data-saver, not an ad blocker —
+                  in-app advertising remains fully functional.{'\n'}
+                  • Radio streams are sourced from the public open community
+                  catalog <Text style={styles.bold}>radio-browser.info</Text>{' '}
+                  and are owned & hosted by their respective broadcasters.
+                  UltraLite does not host, transcode or re-broadcast any
+                  audio. Tap a station to play; close the app to stop.
                 </Text>
               </ScrollView>
               <Pressable
@@ -112,6 +119,10 @@ const styles = StyleSheet.create({
   body: {
     fontSize: FONT.size.sm,
     lineHeight: 22,
+    color: COLORS.text,
+  },
+  bold: {
+    fontWeight: FONT.weight.bold,
     color: COLORS.text,
   },
   acceptBtn: {

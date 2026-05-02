@@ -53,13 +53,15 @@ import { mapToLegacy, isTrustedLite } from '../src/utils/legacyMap';
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
-// Light ad-block for login-page WebViews (UltraLite). Pure-text pages are
-// already clean so they don't need this.
+// Light cosmetic cleanup for login-page WebViews (UltraLite, URI mode).
+// Hides cookie / GDPR / consent banners that bloat lite-version pages on
+// 64 kbps. This is a UX helper for browser navigation only — it does not
+// affect any in-app advertising in any way.
 const LOGIN_PAGE_CSS = `
 (function(){
   try {
     var css = document.createElement('style');
-    css.innerHTML = '[class*="cookie" i],[class*="consent" i],[class*="gdpr" i],[class*="popup-ad" i]{display:none!important;}img,picture,source{max-width:140px!important;max-height:140px!important;filter:grayscale(1) blur(4px)!important;}';
+    css.innerHTML = '[class*="cookie" i],[class*="consent" i],[class*="gdpr" i]{display:none!important;}';
     (document.head || document.documentElement).appendChild(css);
   } catch(e){}
   true;

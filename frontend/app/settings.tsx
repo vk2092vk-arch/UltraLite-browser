@@ -53,7 +53,8 @@ export default function Settings() {
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>UltraLite by default</Text>
               <Text style={styles.rowSubtle}>
-                Block images, scripts, heavy CSS. Use text-only proxy.
+                Strip scripts, heavy CSS and images on web pages to save
+                bandwidth on 64 kbps networks.
               </Text>
             </View>
             <Switch
@@ -100,18 +101,24 @@ export default function Settings() {
           <Text style={styles.cardHead}>About</Text>
           <Text style={styles.about}>
             <Text style={styles.aboutBold}>UltraLite</Text> is a lightweight
-            browsing utility optimised for 2G (64kbps) networks. Pages are
-            fetched on-device, ads and trackers are blocked, scripts and heavy
-            CSS are stripped, images become empty placeholders (tap to reveal
-            on login pages) and a mobile user-agent forces sites to serve their
-            lightweight versions.{'\n\n'}
-            Radio streams are powered by the open community catalog
-            radio-browser.info, filtered to ≤ 48 kbps for low-bandwidth use.
+            web-browsing utility optimised for 2G / sub-64 kbps mobile
+            networks. In Pure Legacy mode, web pages are fetched on the
+            device, scripts and heavy CSS are stripped, and images are
+            replaced with small placeholders so 10 KB pages load in 1-2
+            seconds even on weak connections. A mobile user-agent is sent so
+            sites serve their lightweight versions.{'\n\n'}
+            This is a <Text style={styles.aboutBold}>data-saver</Text>, not
+            an ad blocker — in-app advertising remains fully functional.
             {'\n\n'}
-            <Text style={styles.aboutBold}>No Logs Policy:</Text> Your browsing
-            history, bookmarks, downloads, radio favourites and preferences are
-            stored only on this device (SQLite). Nothing is sent to any
-            UltraLite server.
+            Radio is an open-directory player powered by the community
+            catalog <Text style={styles.aboutBold}>radio-browser.info</Text>
+            , filtered to ≤ 64 kbps for low-bandwidth use. Streams are owned
+            and hosted by their respective broadcasters; UltraLite does not
+            host, transcode or re-broadcast any audio.{'\n\n'}
+            <Text style={styles.aboutBold}>No-Logs Policy:</Text> Browsing
+            history, bookmarks, downloads, radio favourites and preferences
+            are stored only on this device (local SQLite). UltraLite has no
+            backend — nothing is uploaded to our servers.
           </Text>
         </View>
       </ScrollView>

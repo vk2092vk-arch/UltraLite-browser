@@ -136,6 +136,90 @@ export async function reportClick(uuid: string) {
   } catch {}
 }
 
+// Search by station name (free-text "name" filter on radio-browser.info).
+export async function searchByName(
+  name: string,
+  opts: { maxBitrate?: number; minBitrate?: number; limit?: number; country?: string } = {}
+): Promise<Station[]> {
+  const host = await pickHost();
+  const params = new URLSearchParams();
+  params.set('hidebroken', 'true');
+  params.set('order', 'votes');
+  params.set('reverse', 'true');
+  params.set('limit', String(opts.limit ?? 10));
+  params.set('bitrateMax', String(opts.maxBitrate ?? 64));
+  params.set('bitrateMin', String(opts.minBitrate ?? 24));
+  params.set('name', name);
+  if (opts.country) params.set('country', opts.country);
+  try {
+    const r = await fetch(
+      `${host}/json/stations/search?${params.toString()}`,
+      { headers: COMMON_HEADERS }
+    );
+    if (!r.ok) return [];
+    const data: Station[] = await r.json();
+    return data.filter(
+      (s) => s.bitrate <= (opts.maxBitrate ?? 64) && !!s.url_resolved
+    );
+  } catch {
+    return [];
+  }
+}
+
+// Curated "India FM" featured roster.  Each entry is just a NAME passed to
+// radio-browser.info — the actual stream URL/UUID comes from the public
+// catalog (no hardcoded broadcaster URLs).  This keeps us policy-safe:
+// every station is a validated public listing on the open directory.
+//
+// Mix of (a) Government-run All India Radio / Akashvani channels — fully
+// open; and (b) major private FM brands that have explicitly opted into the
+// public radio-browser.info catalog.  Bitrate is capped at ≤ 64 kbps in
+// loadIndiaFmFeatured() to keep the 2G promise.
+export const INDIA_FM_FEATURED: { name: string; label: string }[] = [
+  // ---- Government / All India Radio (always policy-safe) ----
+  { name: 'AIR FM Rainbow', label: 'AIR FM Rainbow (92.7)' },
+  { name: 'Vividh Bharati', label: 'AIR Vividh Bharati' },
+  { name: 'AIR FM Gold', label: 'AIR FM Gold (106.4)' },
+  { name: 'Akashvani', label: 'Akashvani (AIR National)' },
+  { name: 'AIR News', label: 'AIR News' },
+  { name: 'AIR Delhi', label: 'AIR Delhi' },
+  { name: 'AIR Mumbai', label: 'AIR Mumbai' },
+  { name: 'AIR Chennai', label: 'AIR Chennai' },
+  { name: 'AIR Kolkata', label: 'AIR Kolkata' },
+  { name: 'AIR Bengaluru', label: 'AIR Bengaluru' },
+  // ---- Major private FM brands (public listings) ----
+  { name: 'Radio Mirchi', label: 'Radio Mirchi 98.3' },
+  { name: 'Big FM', label: 'Big FM 92.7' },
+  { name: 'Red FM', label: 'Red FM 93.5' },
+  { name: 'Radio City', label: 'Radio City 91.1' },
+  { name: 'Fever FM', label: 'Fever FM 104' },
+  { name: 'Hello FM', label: 'Hello FM 106.4' },
+  { name: 'Suryan FM', label: 'Suryan FM 93.5' },
+  { name: 'My FM', label: 'My FM 94.3' },
+  { name: 'Radio Indigo', label: 'Radio Indigo 91.9' },
+  { name: 'Club FM', label: 'Club FM 94.3' },
+];
+
+/** Load the featured Indian FM roster.  Runs the searches in parallel,
+ *  picks the highest-voted match per name, dedupes by stationuuid. */
+export async function loadIndiaFmFeatured(): Promise<Station[]> {
+  const results = await Promise.all(
+    INDIA_FM_FEATURED.map((f) =>
+      searchByName(f.name, { country: 'India', limit: 5, maxBitrate: 64 })
+    )
+  );
+  const out: Station[] = [];
+  const seen = new Set<string>();
+  for (const list of results) {
+    if (list.length === 0) continue;
+    const top = list[0];
+    if (!top || seen.has(top.stationuuid)) continue;
+    seen.add(top.stationuuid);
+    out.push(top);
+  }
+  return out;
+}
+
 export const COUNTRIES = [
   { code: '', label: 'Worldwide' },
   { code: 'India', label: 'India' },

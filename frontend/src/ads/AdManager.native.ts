@@ -42,25 +42,51 @@ export async function initAds(): Promise<void> {
 
 let _lastAppState: AppStateStatus = 'active';
 let _coldStart = true;
+let _backgroundedAt = 0; // timestamp when app went to background
+let _lastAppOpenShownAt = 0; // timestamp of last successful App Open show
+
+// AdMob best-practice cooldowns to avoid "App Open ad spam" policy flags:
+//   - Skip if user was in background for less than 30 seconds (treats brief
+//     switches like accidental notifications / quick tab changes as not a
+//     real return).
+//   - Min 4 minutes between two App Open shows (defensive — even Google's
+//     own examples avoid back-to-back impressions).
+const APPOPEN_MIN_BG_MS = 30 * 1000;
+const APPOPEN_MIN_GAP_MS = 4 * 60 * 1000;
 
 function handleAppStateChange(next: AppStateStatus) {
   const wasBackground =
     _lastAppState === 'background' || _lastAppState === 'inactive';
+  if (next === 'background' || next === 'inactive') {
+    _backgroundedAt = Date.now();
+  }
   _lastAppState = next;
   if (next !== 'active') return;
   if (_coldStart) {
     _coldStart = false;
     return; // splash screen handles first show
   }
-  if (wasBackground) {
-    // Small delay so UI animations finish smoothly before overlaying ad.
-    setTimeout(() => {
-      if (!showAppOpenIfReady()) {
-        // Wasn't ready — preload for next time.
-        preloadAppOpen();
-      }
-    }, 400);
+  if (!wasBackground) return;
+  const now = Date.now();
+  const awayMs = _backgroundedAt ? now - _backgroundedAt : 0;
+  const sinceLastShow = now - _lastAppOpenShownAt;
+  if (awayMs < APPOPEN_MIN_BG_MS) {
+    // Quick switch — not a real return, skip ad. Keep ad warm for next time.
+    return;
   }
+  if (sinceLastShow < APPOPEN_MIN_GAP_MS) {
+    // Too soon since last App Open — respect frequency cap.
+    return;
+  }
+  // Small delay so UI animations finish smoothly before overlaying ad.
+  setTimeout(() => {
+    if (showAppOpenIfReady()) {
+      _lastAppOpenShownAt = Date.now();
+    } else {
+      // Wasn't ready — preload for next time.
+      preloadAppOpen();
+    }
+  }, 400);
 }
 
 // ---------- App Open ----------

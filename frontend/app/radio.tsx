@@ -23,6 +23,7 @@ import {
   COUNTRIES,
   INDIA_REGION_TAGS,
   LANGUAGES,
+  loadIndiaFmFeatured,
   reportClick,
   searchByTag,
   searchStations,
@@ -48,10 +49,11 @@ import {
   removeRadioFavorite,
 } from '../src/storage/db';
 
-type Category = 'favorites' | 'news' | 'sports' | 'music' | 'all';
+type Category = 'favorites' | 'india_fm' | 'news' | 'sports' | 'music' | 'all';
 
 const CATEGORIES: { key: Category; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'favorites', label: '❤ Favs', icon: 'heart' },
+  { key: 'india_fm', label: '🇮🇳 India FM', icon: 'radio-outline' },
   { key: 'all', label: 'All', icon: 'globe-outline' },
   { key: 'news', label: 'News', icon: 'newspaper-outline' },
   { key: 'sports', label: 'Sports', icon: 'football-outline' },
@@ -155,7 +157,17 @@ export default function Radio() {
     }
     setLoading(true);
     let results: Station[];
-    if (regionTag) {
+    if (category === 'india_fm') {
+      // Curated India FM roster (AIR / Vividh Bharati / Mirchi / Big FM /
+      // Red FM / Radio City / Fever / Hello / Suryan / My FM / Indigo /
+      // Club FM). All from radio-browser.info — no hardcoded URLs.
+      results = await loadIndiaFmFeatured();
+      // If user typed a query, filter the featured list client-side.
+      if (query.trim()) {
+        const q = query.trim().toLowerCase();
+        results = results.filter((s) => s.name.toLowerCase().includes(q));
+      }
+    } else if (regionTag) {
       results = await searchByTag(regionTag, {
         maxBitrate: 48,
         minBitrate: 24,
@@ -429,11 +441,15 @@ export default function Radio() {
           <Text style={styles.loadingText}>
             {category === 'favorites'
               ? 'No favorites yet'
+              : category === 'india_fm'
+              ? 'No India FM stations available right now'
               : 'No stations found.'}
           </Text>
           <Text style={styles.loadingSubtle}>
             {category === 'favorites'
               ? 'Tap the heart icon on any station to save it here.'
+              : category === 'india_fm'
+              ? 'The catalog server may be busy — pull to retry, or pick another category.'
               : 'Try changing filters or category.'}
           </Text>
         </View>
@@ -444,6 +460,14 @@ export default function Radio() {
           renderItem={renderItem}
           contentContainerStyle={{ padding: SPACING.md, paddingBottom: 80 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          ListFooterComponent={
+            category !== 'favorites' ? (
+              <Text style={styles.attribution}>
+                Streams from radio-browser.info — owned & hosted by their
+                broadcasters. UltraLite does not host any audio.
+              </Text>
+            ) : null
+          }
         />
       )}
 
@@ -779,4 +803,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   applyText: { color: '#fff', fontWeight: FONT.weight.bold, fontSize: FONT.size.md },
+  attribution: {
+    textAlign: 'center',
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    fontSize: FONT.size.xs,
+    color: COLORS.textMuted,
+    fontStyle: 'italic',
+    lineHeight: 16,
+  },
 });
