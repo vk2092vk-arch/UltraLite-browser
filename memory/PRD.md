@@ -21,6 +21,58 @@ Android mobile browser app (React Native / Expo SDK 54). Two modes: Normal + Ult
 - AdMob & Play Store policy compliance
 - Per-channel radio favorites
 
+## Session 4 Log (2026-01) — Browser UI redesign + Radio auto-unlock + Banner reliability
+
+User reported (based on APK from Session 2 build, pre-pure-text engine):
+1. UltraLite still looked like Chrome — pages loaded with full colors/images
+2. Banner ads missing at bottom — no App Open, no Interstitial firing
+3. Bottom nav bar taking space needed for banner — wants it merged into top
+4. Radio rewarded doesn't always load → user gets stuck
+
+### Note on UltraLite:
+Session 3 code (on-device HTML fetch+strip pure-text engine) wasn't pushed yet when user tested. Session 3 engine fully addresses issue #1. This session ships it plus the UI/ad fixes below.
+
+### Changes this session
+
+**Browser UI redesign (`app/home.tsx`)** — bottom nav bar REMOVED, everything merged into top maroon toolbar:
+- When on home: [🔍 Search or enter URL] pill (same as before)
+- When browsing: `[ < ] [ 🏠 ] [ 🔄 current-url-text ]` all in a single compact row inside the maroon header
+  - Back and Home icons are circular buttons on the left side (outside URL box, semi-transparent white)
+  - URL pill shows reload icon on left + page title/URL text — tapping pill returns to search input mode
+  - Reload icon flips to `close` while loading
+- Bottom area now dedicated to banner ad — much more vertical space for it to render properly
+
+**Radio 10-click auto-unlock (`app/radio.tsx`)** — per-station click counter:
+- Each locked station tracks failed-ad attempts in an in-memory `Map<stationuuid, count>`
+- If user taps a locked station and rewarded ad isn't ready: counter++ and user sees "Tries: N/10 — auto-unlock at 10"
+- On 10th failed tap: station auto-unlocks for 30 min as goodwill, counter resets
+- Ensures users are never stuck because of AdMob fill-rate issues
+
+**Banner reliability (`src/components/AdBanner.native.tsx`)**
+- Removed forced `minHeight: 50` — lets adaptive banner pick its own ideal size (50/90/100 px depending on device)
+- White background (was gray) so banner blends cleanly with the pages
+- Added `onAdFailedToLoad` auto-retry in 15s by bumping the key
+
+### AdMob behavior notes
+- App Open: AppState listener already wired in Session 3 (fires on every background→active). Note: freshly installed APK needs 2-3 mins for the first few ad requests to start filling — Google's initial cache warmup.
+- Interstitial 10/15 rule already in Session 3.
+- Banner IDs are production (`ca-app-pub-9675798593675825/6025593730`) with test device ID whitelisted.
+
+## Next Action Items
+1. **Click "Save to Github"** → builds fresh APK with ALL session-3+4 changes
+2. Install APK, try these:
+   - UltraLite + open news.google.com → should now render as pure B&W text with X-box images (NOT full color)
+   - Browsing toolbar → only top bar (no bottom nav) + banner at bottom
+   - Lock a radio station → tap 10 times without ad → auto-unlocks for 30 min
+   - Background app → return → App Open fires
+
+## Files changed (Session 4)
+- `/app/frontend/app/home.tsx` (toolbar merge)
+- `/app/frontend/app/radio.tsx` (10-click auto-unlock)
+- `/app/frontend/src/components/AdBanner.native.tsx` (reliability)
+
+---
+
 ## Session 3 Log (2026-01) — Pure-Text Engine + Favorites + History UX
 
 User reported: "UltraLite and Chrome looked identical, images blurred wasn't enough". Requested true Opera-Mini-grade on-device rendering + many UI/feature upgrades.

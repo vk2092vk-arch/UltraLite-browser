@@ -286,35 +286,102 @@ export default function Home() {
       />
 
       <View style={styles.searchBarWrap}>
-        <View style={styles.searchBar}>
-          <Ionicons
-            name="search"
-            size={18}
-            color={COLORS.textMuted}
-            style={{ marginRight: 8 }}
-          />
-          <TextInput
-            testID="search-input"
-            style={styles.searchInput}
-            placeholder="Search or enter URL"
-            placeholderTextColor={COLORS.textMuted}
-            value={input}
-            onChangeText={setInput}
-            onSubmitEditing={() => goSearch()}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-          />
-          {input.length > 0 && (
+        {showHome ? (
+          <View style={styles.searchBar}>
+            <Ionicons
+              name="search"
+              size={18}
+              color={COLORS.textMuted}
+              style={{ marginRight: 8 }}
+            />
+            <TextInput
+              testID="search-input"
+              style={styles.searchInput}
+              placeholder="Search or enter URL"
+              placeholderTextColor={COLORS.textMuted}
+              value={input}
+              onChangeText={setInput}
+              onSubmitEditing={() => goSearch()}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {input.length > 0 && (
+              <Pressable
+                onPress={() => setInput('')}
+                hitSlop={10}
+                testID="search-clear-btn"
+              >
+                <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          // Browser-active toolbar: back | home | [reload + URL pill]
+          <View style={styles.navRow}>
             <Pressable
-              onPress={() => setInput('')}
-              hitSlop={10}
-              testID="search-clear-btn"
+              onPress={() => {
+                if (renderMode === 'uri' && canGoBack) {
+                  webRef.current?.goBack();
+                } else {
+                  openUrl('');
+                  setInput('');
+                }
+                trackClick();
+              }}
+              style={styles.navIconBtn}
+              hitSlop={8}
+              testID="webview-back"
             >
-              <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
+              <Ionicons name="chevron-back" size={22} color="#fff" />
             </Pressable>
-          )}
-        </View>
+            <Pressable
+              onPress={() => {
+                openUrl('');
+                setInput('');
+                setPageTitle('');
+              }}
+              style={styles.navIconBtn}
+              hitSlop={8}
+              testID="webview-home"
+            >
+              <Ionicons name="home" size={20} color="#fff" />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                // tapping URL pill returns focus to an editable search input
+                openUrl('');
+                setInput(pageTitle && pageTitle.includes('.') ? pageTitle : url);
+              }}
+              style={styles.urlPill}
+              testID="webview-url-pill"
+            >
+              <Pressable
+                onPress={() => {
+                  if (renderMode === 'html') openUrl(url);
+                  else webRef.current?.reload();
+                  trackClick();
+                }}
+                hitSlop={8}
+                style={styles.reloadInner}
+                testID="webview-reload"
+              >
+                <Ionicons
+                  name={loading ? 'close' : 'refresh'}
+                  size={16}
+                  color={COLORS.maroon}
+                />
+              </Pressable>
+              <Text
+                style={styles.urlPillText}
+                numberOfLines={1}
+                testID="webview-current-url"
+              >
+                {pageTitle || deriveTitle(url)}
+              </Text>
+            </Pressable>
+          </View>
+        )}
       </View>
 
       <KeyboardAvoidingView
@@ -473,59 +540,6 @@ export default function Home() {
                 userAgent={ultraLite ? MOBILE_UA : undefined}
               />
             )}
-            <View style={styles.navBar}>
-              <Pressable
-                onPress={() => {
-                  if (renderMode === 'uri' && canGoBack) {
-                    webRef.current?.goBack();
-                  } else {
-                    openUrl('');
-                    setInput('');
-                  }
-                  trackClick();
-                }}
-                style={styles.navBtn}
-                testID="webview-back"
-              >
-                <Ionicons
-                  name="chevron-back"
-                  size={22}
-                  color={COLORS.maroon}
-                />
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  if (renderMode === 'html') {
-                    openUrl(url);
-                  } else {
-                    webRef.current?.reload();
-                  }
-                  trackClick();
-                }}
-                style={styles.navBtn}
-                testID="webview-reload"
-              >
-                <Ionicons name="refresh" size={20} color={COLORS.maroon} />
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  openUrl('');
-                  setInput('');
-                  setPageTitle('');
-                }}
-                style={styles.navBtn}
-                testID="webview-home"
-              >
-                <Ionicons name="home" size={20} color={COLORS.maroon} />
-              </Pressable>
-              <Text
-                style={styles.navUrl}
-                numberOfLines={1}
-                testID="webview-current-url"
-              >
-                {pageTitle || deriveTitle(url)}
-              </Text>
-            </View>
           </View>
         )}
 
@@ -612,6 +626,42 @@ const styles = StyleSheet.create({
     fontSize: FONT.size.md,
     color: COLORS.text,
     padding: 0,
+  },
+  navRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  navIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  urlPill: {
+    flex: 1,
+    height: 38,
+    paddingLeft: 8,
+    paddingRight: 12,
+    backgroundColor: '#fff',
+    borderRadius: 19,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  reloadInner: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  urlPillText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: FONT.size.sm,
   },
   homeScroll: {
     padding: SPACING.md,
@@ -712,29 +762,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   loaderText: { color: COLORS.textMuted, fontSize: FONT.size.sm, textAlign: 'center' },
-  navBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 6,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    backgroundColor: '#fff',
-    gap: 4,
-  },
-  navBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  navUrl: {
-    flex: 1,
-    color: COLORS.textMuted,
-    fontSize: FONT.size.xs,
-    paddingHorizontal: SPACING.sm,
-  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

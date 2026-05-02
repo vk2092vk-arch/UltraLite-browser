@@ -1,7 +1,7 @@
 // Radio & Music — categories, country/language filter, search, 64kbps strict.
 // Reward Ad gate: PER-CHANNEL — each station requires its own rewarded ad to
 // unlock 30-min playback. Other stations remain locked independently.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -220,6 +220,8 @@ export default function Radio() {
     [sound]
   );
 
+  const clickAttempts = useRef<Record<string, number>>({});
+
   const playStation = useCallback(
     async (s: Station) => {
       // Per-channel unlock gate.
@@ -227,10 +229,26 @@ export default function Radio() {
         await startPlayback(s);
         return;
       }
+      // Track failed attempts to watch a rewarded ad.
+      clickAttempts.current[s.stationuuid] =
+        (clickAttempts.current[s.stationuuid] || 0) + 1;
+      const attempts = clickAttempts.current[s.stationuuid];
+
       // Not unlocked — user must watch a rewarded ad for THIS station.
       if (!isRewardedReady()) {
         preloadRewarded();
-        alert('Ad is loading… please tap the station again in a few seconds.');
+        // After 10 failed attempts, grant unlock as a goodwill reward so the
+        // user is never stuck because of ad-fill issues.
+        if (attempts >= 10) {
+          await grantChannelReward(s.stationuuid);
+          clickAttempts.current[s.stationuuid] = 0;
+          alert('Ad unavailable — channel unlocked for 30 minutes as a bonus.');
+          await startPlayback(s);
+          return;
+        }
+        alert(
+          `Ad is loading… tap the station again in a few seconds.\n(Tries: ${attempts}/10 — auto-unlock at 10)`
+        );
         return;
       }
       let earned = false;
@@ -239,6 +257,7 @@ export default function Radio() {
         await grantChannelReward(s.stationuuid);
       });
       if (!ok || !earned) return;
+      clickAttempts.current[s.stationuuid] = 0;
       // After reward granted, start playback.
       await startPlayback(s);
     },

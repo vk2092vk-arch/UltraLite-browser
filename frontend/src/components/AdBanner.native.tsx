@@ -42,6 +42,10 @@ const AdBanner: React.FC<Props> = ({ testID }) => {
         requestOptions={{
           requestNonPersonalizedAdsOnly: true,
         }}
+        onAdFailedToLoad={() => {
+          // Auto-retry in 15 seconds by bumping the key.
+          setTimeout(() => setTick((t) => t + 1), 15000);
+        }}
       />
     </View>
   );
@@ -50,10 +54,9 @@ const AdBanner: React.FC<Props> = ({ testID }) => {
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    backgroundColor: COLORS.cardSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 50,
+    backgroundColor: '#FFFFFF',
   },
   placeholder: {
     height: 50,
