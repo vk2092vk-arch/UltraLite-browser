@@ -16,17 +16,16 @@ export default function SplashScreen() {
     let mounted = true;
     (async () => {
       try {
+        // Start ads immediately so App Open has time to load.
+        initAds().then(() => preloadAppOpen()).catch(() => {});
         await hydrate();
-        await initAds();
-        preloadAppOpen();
       } catch (e) {
         console.warn('[splash] init err', e);
       }
-      // Show splash for 3.2s then attempt App Open
+      // Show splash for ~2s then attempt App Open.
       const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-      await wait(3200);
+      await wait(2000);
       if (!mounted) return;
-      // Try to show App Open (non-blocking — proceed to home regardless)
       showAppOpenIfReady();
       await ExpoSplash.hideAsync().catch(() => {});
       router.replace('/home');

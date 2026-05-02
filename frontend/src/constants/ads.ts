@@ -25,9 +25,9 @@ export const AD_UNITS = isDev ? DEMO : PROD;
 
 export const ADMOB_APP_ID = 'ca-app-pub-9675798593675825~9834036299';
 
-// Click counters for interstitial logic (15th click load, 20th click show)
-export const INTERSTITIAL_LOAD_AT = 15;
-export const INTERSTITIAL_SHOW_AT = 20;
+// Click counters for interstitial logic (10th click load, 15th click show)
+export const INTERSTITIAL_LOAD_AT = 10;
+export const INTERSTITIAL_SHOW_AT = 15;
 
 // Banner refresh interval (45-60s for high CPM)
 export const BANNER_REFRESH_MS = 50000;

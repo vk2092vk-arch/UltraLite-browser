@@ -2,144 +2,99 @@
 
 ## Original Problem Statement
 Repo: https://github.com/vk2092vk-arch/UltraLite-browser.git
-Android mobile browser app (React Native / Expo SDK 54). Two modes: Normal + UltraLite. UltraLite mode runs websites as text on <64kbps (2G) speeds. Radio & music section must stream at 64kbps. AdMob monetization. Previous GitHub Actions build (#12) was failing at the CMake/NDK compile step. Strictly avoid web-preview and EAS build. Do NOT break existing working behavior.
+Android mobile browser app (React Native / Expo SDK 54). Two modes: Normal + UltraLite. UltraLite mode runs websites as text on <64kbps (2G) speeds. Radio & music section must stream at 64kbps. AdMob monetization. Previous GitHub Actions build was failing at CMake. Strictly avoid web-preview and EAS build. Don't break existing working behavior.
 
 ## Tech Stack
 - React Native 0.81.5 + Expo SDK 54
-- expo-router, react-native-webview, expo-av (radio), expo-sqlite
+- expo-router · react-native-webview · expo-av · expo-sqlite · expo-file-system 19
 - react-native-google-mobile-ads 16.3.3
 - react-native-reanimated 4.1.1 + react-native-worklets 0.8.1 (new arch)
-- CI: GitHub Actions (Ubuntu runner) → APK + AAB artifacts
+- CI: GitHub Actions → APK + AAB artifacts
 
 ## Core Requirements (static)
-- Browser with two modes (Normal / UltraLite text-only via r.jina.ai proxy)
-- Safe search (strict) for all search queries
-- Radio / Music browser (radio-browser.info directory, ≤ 64 kbps filter)
-- AdMob: App-Open, Banner, Interstitial, Rewarded (per-channel unlock)
+- Browser with two modes (Normal / UltraLite true pure-text)
+- Strict SafeSearch for all search queries
+- Radio / Music (radio-browser.info directory, ≤ 48 kbps for 2G)
+- AdMob: App-Open (on foreground), Banner (per screen), Interstitial (10/15), Rewarded (per-channel)
 - Android tablet + landscape support
-- No server-side data; all storage local (SQLite + AsyncStorage)
+- Local-only storage (SQLite + AsyncStorage) — no server
 - AdMob & Play Store policy compliance
+- Per-channel radio favorites
 
-## Session Work Log
+## Session 3 Log (2026-01) — Pure-Text Engine + Favorites + History UX
 
-### 2026-01 Session 2 — Opera-Mini-style UltraLite rewrite + Downloads + UI fixes
-User reported 3 issues from real-device APK testing:
-1. UltraLite Instagram page showed raw r.jina.ai markdown dump — login unusable
-2. Radio category chips' text disappeared intermittently
-3. No Downloads feature in menu
+User reported: "UltraLite and Chrome looked identical, images blurred wasn't enough". Requested true Opera-Mini-grade on-device rendering + many UI/feature upgrades.
 
-**User chose "Opera Mini / Facebook Basic hybrid" architecture.** Changes:
+### Changes
 
-**UltraLite engine rewritten (`app/home.tsx`)** — removed r.jina.ai proxy path entirely. Now uses a pure client-side optimization pipeline:
-- WebView keeps JS + cookies + CSS enabled so login/interactive pages work
-- Injects `AD_BLOCK_EARLY` BEFORE content loads — monkey-patches `fetch`, `XMLHttpRequest`, and `document.createElement('script'|'iframe'|'img')` to reject requests to 30+ ad/tracker domains (googletagmanager, doubleclick, scorecardresearch, taboola, criteo, pubmatic, hotjar, mixpanel, sentry-cdn, tiktok pixel, etc.)
-- Post-content JS (`ULTRA_INJECTED_JS`) blurs all images (tap to reveal), hides `<video>/<canvas>/<embed>` and non-captcha iframes, strips decorative CSS (backgrounds, shadows, animations) while preserving layout so login forms stay aligned
-- Sets Chrome-Android mobile User-Agent so sites serve their lightweight mobile build
+**UltraLite Engine — TRUE Pure-Text mode (new `src/utils/ultraliteFetch.ts`)**
+- For non-login URLs: RN `fetch()` (no CORS) → strip `<script>/<style>/<iframe>/<video>/<audio>/<canvas>/<svg>/<picture>/<link>/<object>` → replace every `<img>` with empty X-box span → strip all inline event handlers and `style=""` attrs → inject B&W serif-font CSS via `<base href>` + `<style>` → render via `WebView source={{ html, baseUrl }}`.
+- `javaScriptEnabled={false}` for these HTML-rendered pages — literally zero scripts load, no ads/trackers/analytics possible.
+- For login URLs (detected via regex covering `/login`, `/signin`, `accounts.google.com`, `m.facebook.com/login`, `instagram.com/accounts/*`, `/auth`, `/oauth`, `/sso`, etc.): fall back to normal WebView with JS on + light CSS injection to hide cookie/GDPR popups and blur large images — so Facebook/Instagram login keeps working.
+- Mobile Chrome UA → sites serve lightweight mobile builds.
+- Sub-navigation intercept: clicking links in pure-text mode re-triggers fetch+filter (no WebView navigation).
+- 12s timeout + friendly error page with "Open in Normal Mode" hint.
 
-**Downloads feature (NEW)**
-- Added `expo-file-system@~19.0.22`
-- New table `downloads` in `src/storage/db.ts` (filename, url, local_uri, size, mime, status, created_at)
-- New utility `src/utils/downloads.ts` — extension-based URL detection, safe filename, resumable download with optional progress, Alert on complete/fail, writes to `FileSystem.documentDirectory + UltraLite-Downloads/`
-- New screen `app/downloads.tsx` — list of downloads with tap-to-open, per-item delete, "Clear all", empty state, banner ad
-- Home WebView intercept: any URL with a downloadable extension (.pdf, .apk, .mp3, .mp4, .zip, .jpg, .doc, .xls, etc.) is routed to `downloadFile()` instead of WebView navigation
-- Anchor with `download` attribute also caught via `postMessage` from injected JS
-- Downloads menu item added in home 3-dot menu
+**Home screen redesign (`app/home.tsx`)**
+- History card REMOVED from home (still accessible from menu → History).
+- New **Top Apps grid** (4 × N) replaces it — 10 defaults seeded on first run (Instagram, Facebook, YouTube, Google, News, Wikipedia, X, Reddit, ESPN, Gmail). Icons from Google favicon service. Long-press any tile → confirm → delete. "+" tile opens modal to add custom name+URL.
+- Normal mode: white body, maroon header only (no gray surfaces on home cards). UltraLite mode keeps current look.
+- Pure-text loading overlay with progress bar + "Stripping ads & heavy content for 2G…" message.
 
-**Radio chip fix (`app/radio.tsx`)** — replaced `maxHeight: 56` + `paddingVertical: 9` with fixed `height: 38` on chips + `includeFontPadding: false` + `lineHeight: 18` on label. Chip text now renders consistently.
+**Radio features (`app/radio.tsx` + service + db)**
+- **Heart icon on every station** → toggle favorite → saved in SQLite `radio_favorites`.
+- New **Favorites category** (first tab, red ❤ label) — data from local DB only, works offline.
+- New **India regional** filter row in filters sheet — tags: Punjab, J&K, Bollywood, Bhajan, Tamil/Telugu/Kannada/Malayalam/Marathi/Bengali/Gujarati/Assamese/Odia/Haryanvi/Rajasthani.
+- **Stricter bitrate** cap: 24–48 kbps (was 32–64) for real 2G performance, with client-side re-filter.
+- Android `MediaPlayer` implementation (better buffer for low-bandwidth) + 1-second progress interval.
+- Expanded COUNTRIES list: India, Pakistan, Bangladesh, Nepal, Sri Lanka, UAE, Saudi Arabia, + existing.
+- Expanded LANGUAGES: Hindi, Punjabi, Kashmiri, Urdu, Tamil, Telugu, Kannada, Malayalam, Marathi, Bengali, Gujarati + existing.
 
-**Cleanup**
-- `src/utils/url.ts` simplified — removed `toJina/fromJina/isUltraLiteUrl` (dead code after engine rewrite)
-- `_layout.tsx` + `settings.tsx` — copy refreshed to describe new UltraLite engine (no DDG/jina mentions)
+**AdMob logic updates (`src/constants/ads.ts` + `AdManager.native.ts`)**
+- Interstitial: **load at 10 clicks, show at 15 clicks** (per user).
+- App Open: strict `AppState` listener — on every `background → active` transition, if ready → show; if not → preload for next time. Cold start skipped (splash handles that).
+- Splash time reduced to ~2s; `initAds()` + `preloadAppOpen()` now fire in parallel with `hydrate()`.
 
-## Ad Placement Summary (unchanged, policy-compliant)
-| Ad Format | Trigger | Notes |
-|---|---|---|
-| App Open | On cold start (splash 3.2s → show if ready) | non-blocking |
-| Banner | Home, Browser, Radio, Bookmarks, History, Settings, Downloads — 1 per screen | 50s auto-refresh, adaptive size |
-| Interstitial | Pre-load at 15th click, show at 20th click, reset counter | any tap counted via `trackClick()` |
-| Rewarded | Tap a locked radio/music channel → watch 1 ad → unlock THAT channel for 30 mins | per-station unlock map persists in AsyncStorage |
+**History redesign (`app/history.tsx`)**
+- Grouped sections: **Today / Yesterday / Older** with per-group count badges.
+- **Long-press any item → enters multi-select mode** → tap to toggle, maroon checkmark indicator, "N selected" header with close + trash buttons.
+- "Clear all" still available in non-select mode.
 
-## What's been implemented
-- [x] Session 1: Build failure fix (worklets 0.8.1), tablet/landscape, per-channel rewarded, ad copy cleanup, banners on all screens
-- [x] Session 2: Opera-Mini-style hybrid UltraLite engine, Downloads feature, Radio chip text fix
+**Settings copy cleanup (`app/settings.tsx`)**
+- Removed all "Opera Mini" / Facebook Basic / r.jina.ai / DuckDuckGo brand mentions.
+- Rewrote About section to describe the new on-device pure-text engine without copyrighted names.
 
-## Next Action Items (user must do)
-1. Click **"Save to Github"** in Emergent → pushes /app to the repo → GitHub Actions auto-triggers
-2. Wait ~8-10 min → download APK + AAB artifacts from the green run
-3. Test on real Android phone + tablet:
-   - Open Instagram in UltraLite → login form should be usable (images blurred, ads blocked)
-   - Radio screen → category chip text always visible
-   - Browse a site with a PDF / APK / image link → download flows to Downloads menu
-   - Menu → Downloads → see list of downloaded files → tap to open
+**DB schema additions (`src/storage/db.ts`)**
+- `shortcuts(id, name, url, icon, order_idx, created_at)` — seeded with 10 defaults on first run.
+- `radio_favorites(uuid, name, country, language, bitrate, codec, url, url_resolved, created_at)`.
+- New helper `removeHistoryByIds(ids[])` for multi-select delete.
 
-## Files changed (Session 2)
-- `/app/frontend/package.json` (+ expo-file-system)
-- `/app/frontend/app/home.tsx` (full rewrite — Opera-Mini hybrid)
-- `/app/frontend/app/radio.tsx` (chip layout)
-- `/app/frontend/app/downloads.tsx` (NEW)
-- `/app/frontend/app/settings.tsx` (about text)
-- `/app/frontend/app/_layout.tsx` (disclaimer text)
-- `/app/frontend/src/storage/db.ts` (+ downloads table & helpers)
-- `/app/frontend/src/utils/downloads.ts` (NEW)
-- `/app/frontend/src/utils/url.ts` (simplified)
-**Root cause of build #12 failure (CMake non-zero exit 1):**
-- Previous agent downgraded `react-native-worklets` from `^0.8.1` → `0.5.1` in package.json
-- worklets 0.5.1 is incompatible with reanimated 4.1.1 + RN 0.81.5 + New Architecture → CMake/NDK compile failed linking C++ worklets bindings
-- Successful run #11 had worklets `^0.8.1`; failed #12 had `0.5.1`
+## What's been implemented (cumulative)
+- [x] Session 1: Build fix (worklets 0.8.1) · tablet/landscape · per-channel rewarded · banners per screen
+- [x] Session 2: Initial data-saver (blur/ad-block) · Downloads feature · chip text fix
+- [x] Session 3: **True pure-text engine** · **radio favorites + regional India** · **home apps grid** · **history by date + multi-select** · **interstitial 10/15** · **AppState-driven App Open** · Opera Mini branding removed
 
-**Fix applied:**
-- `frontend/package.json` → `react-native-worklets: ^0.8.1` (restored)
+## Next Action Items
+1. **Click "Save to Github"** → Actions auto-builds APK + AAB.
+2. Download artifacts, install on real Android phone + tablet.
+3. Real-device tests:
+   - Open any news site in UltraLite → should render as plain B&W text with X-boxes instead of images, ads/banners gone
+   - Open instagram.com in UltraLite → detects login, shows proper login form (not raw markdown anymore)
+   - Home → long-press Instagram tile → Delete works
+   - Home → tap "+" → add "Quora" / `quora.com` → new tile appears
+   - Radio → tap ❤ on 3 stations → switch to "❤ Favs" tab → all 3 appear offline
+   - Radio filters → scroll to "India regional" → tap "Punjab / Punjabi" → list updates
+   - History → long-press an item → multi-select N items → trash icon → confirm → gone
+   - Background app → return → App Open ad fires reliably
 
-**Additional improvements this session:**
-1. `app.json`: `orientation: "portrait"` → `"default"` (tablets + landscape full-screen)
-2. `app.json`: added `softwareKeyboardLayoutMode: "pan"` (Android keyboard UX)
-3. `src/constants/ads.ts`: `INTERSTITIAL_SHOW_AT = 30` → `20` (per user spec)
-4. `src/state/appState.ts`: rewritten — global reward unlock → **per-channel unlock map** (each station requires its own rewarded ad for 30 mins; others stay locked independently)
-5. `app/radio.tsx`: rewritten to use per-channel gate — each locked station shows "Ad" chip; tapping triggers rewarded ad; unlocked stations show remaining-time timer
-6. `app/home.tsx`: search placeholder `"Search DuckDuckGo or type URL"` → `"Search or enter URL"` (copyright removal)
-7. `app/_layout.tsx`: disclaimer `"DuckDuckGo searches"` → `"searches"` (copyright removal)
-8. `app/settings.tsx`: about text — removed explicit DuckDuckGo/r.jina.ai brand mentions
-9. Added `<AdBanner />` to `app/bookmarks.tsx`, `app/history.tsx`, `app/settings.tsx` (more banner slots across app, policy-safe: 1 per screen)
-10. `.github/workflows/build-apk.yml`: hardened — timeout 40→60 min, unified disk-free + 8GB swap step, idempotent gradle.properties writer, `--stacktrace` for better diagnostics, keeps newArch=true (required by reanimated 4)
-
-## Ad Placement Summary (policy-compliant)
-| Ad Format | Trigger | Notes |
-|---|---|---|
-| App Open | On cold start (splash 3.2s → show if ready) | non-blocking |
-| Banner | Home, Browser (via Home), Radio, Bookmarks, History, Settings — 1 per screen | 50s auto-refresh, adaptive size |
-| Interstitial | Pre-load at 15th click, show at 20th click, reset counter | any tap counted via `trackClick()` |
-| Rewarded | Tap a locked radio/music channel → watch 1 ad → unlock THAT channel for 30 mins | per-station unlock map persists in AsyncStorage |
-
-## What's been implemented (this session)
-- [x] Build failure root cause identified + fixed (worklets version)
-- [x] Tablet/landscape orientation support
-- [x] Per-channel rewarded ad unlock (30-min timer per station)
-- [x] Interstitial threshold 20 clicks
-- [x] AdBanner on every major screen
-- [x] Copyright / brand name cleanup from user-facing UI
-- [x] GitHub Actions workflow hardened (memory, disk, swap, diagnostics)
-
-## Next Action Items (user must do)
-1. Click **"Save to Github"** in Emergent chatbox → pushes /app to user's GitHub repo
-2. GitHub Actions (`Build UltraLite Android APK`) will auto-trigger on push to main
-3. Download APK + AAB artifacts from the Actions run page once it goes green
-4. Install APK on real Android device (phone + tablet) to validate
-5. Test on real 2G/64kbps throttled network
-
-## Future / Backlog
-- Optional: OTA updates via expo-updates (publish JS bundles without Play Store review)
-- Optional: In-app review prompt (Play In-App Review API) after N radio plays
-- Optional: Pre-cached offline landing page for true zero-bandwidth start
-
-## Files changed (absolute paths)
-- `/app/frontend/package.json`
-- `/app/frontend/app.json`
-- `/app/frontend/src/constants/ads.ts`
-- `/app/frontend/src/state/appState.ts`
-- `/app/frontend/app/radio.tsx`
-- `/app/frontend/app/home.tsx`
-- `/app/frontend/app/_layout.tsx`
-- `/app/frontend/app/settings.tsx`
-- `/app/frontend/app/bookmarks.tsx`
-- `/app/frontend/app/history.tsx`
-- `/app/.github/workflows/build-apk.yml`
+## Files changed (Session 3)
+- `/app/frontend/app/home.tsx` (full rewrite)
+- `/app/frontend/app/radio.tsx` (favorites + region)
+- `/app/frontend/app/history.tsx` (full rewrite)
+- `/app/frontend/app/settings.tsx` (copy cleanup)
+- `/app/frontend/app/index.tsx` (splash timing)
+- `/app/frontend/src/utils/ultraliteFetch.ts` (NEW — engine)
+- `/app/frontend/src/storage/db.ts` (shortcuts + favorites tables)
+- `/app/frontend/src/services/radioBrowser.ts` (searchByTag + regional tags + strict bitrate)
+- `/app/frontend/src/constants/ads.ts` (10/15 rule)
+- `/app/frontend/src/ads/AdManager.native.ts` (AppState listener)

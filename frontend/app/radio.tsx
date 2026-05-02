@@ -21,8 +21,10 @@ import AdBanner from '../src/components/AdBanner';
 import { COLORS, FONT, RADIUS, SPACING } from '../src/constants/theme';
 import {
   COUNTRIES,
+  INDIA_REGION_TAGS,
   LANGUAGES,
   reportClick,
+  searchByTag,
   searchStations,
   Station,
 } from '../src/services/radioBrowser';
@@ -39,10 +41,17 @@ import {
   hydrate,
   useAppState,
 } from '../src/state/appState';
+import {
+  addRadioFavorite,
+  getRadioFavorites,
+  RadioFav,
+  removeRadioFavorite,
+} from '../src/storage/db';
 
-type Category = 'news' | 'sports' | 'music' | 'all';
+type Category = 'favorites' | 'news' | 'sports' | 'music' | 'all';
 
 const CATEGORIES: { key: Category; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'favorites', label: '❤ Favs', icon: 'heart' },
   { key: 'all', label: 'All', icon: 'globe-outline' },
   { key: 'news', label: 'News', icon: 'newspaper-outline' },
   { key: 'sports', label: 'Sports', icon: 'football-outline' },
@@ -69,10 +78,17 @@ export default function Radio() {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState<Station | null>(null);
   const [busyStation, setBusyStation] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState<RadioFav[]>([]);
+  const [regionTag, setRegionTag] = useState<string>('');
+
+  const refreshFavorites = useCallback(async () => {
+    setFavorites(await getRadioFavorites());
+  }, []);
 
   useEffect(() => {
     hydrate();
     preloadRewarded();
+    refreshFavorites();
     Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
       staysActiveInBackground: true,
@@ -84,20 +100,81 @@ export default function Radio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const favUuids = useMemo(
+    () => new Set(favorites.map((f) => f.uuid)),
+    [favorites]
+  );
+
+  const toggleFavorite = useCallback(
+    async (s: Station) => {
+      if (favUuids.has(s.stationuuid)) {
+        await removeRadioFavorite(s.stationuuid);
+      } else {
+        await addRadioFavorite({
+          uuid: s.stationuuid,
+          name: s.name,
+          country: s.country,
+          language: s.language,
+          bitrate: s.bitrate,
+          codec: s.codec,
+          url: s.url,
+          url_resolved: s.url_resolved,
+        });
+      }
+      await refreshFavorites();
+    },
+    [favUuids, refreshFavorites]
+  );
+
+  // Convert RadioFav -> Station for rendering.
+  const favAsStations = useMemo<Station[]>(
+    () =>
+      favorites.map((f) => ({
+        stationuuid: f.uuid,
+        name: f.name,
+        url: f.url,
+        url_resolved: f.url_resolved || f.url,
+        homepage: '',
+        favicon: '',
+        tags: '',
+        country: f.country || '',
+        countrycode: '',
+        language: f.language || '',
+        languagecodes: '',
+        bitrate: f.bitrate || 0,
+        codec: f.codec || '',
+        votes: 0,
+      })),
+    [favorites]
+  );
+
   const load = useCallback(async () => {
+    if (category === 'favorites') {
+      await refreshFavorites();
+      return;
+    }
     setLoading(true);
-    const results = await searchStations({
-      category,
-      country: country || undefined,
-      language: language || undefined,
-      query: query || undefined,
-      maxBitrate: 64,
-      minBitrate: 32, // skip very low-quality ones for usable audio
-      limit: 60,
-    });
+    let results: Station[];
+    if (regionTag) {
+      results = await searchByTag(regionTag, {
+        maxBitrate: 48,
+        minBitrate: 24,
+        limit: 60,
+      });
+    } else {
+      results = await searchStations({
+        category: category as 'news' | 'sports' | 'music' | 'all',
+        country: country || undefined,
+        language: language || undefined,
+        query: query || undefined,
+        maxBitrate: 48,
+        minBitrate: 24,
+        limit: 60,
+      });
+    }
     setStations(results);
     setLoading(false);
-  }, [category, country, language, query]);
+  }, [category, country, language, query, regionTag, refreshFavorites]);
 
   useEffect(() => {
     load();
@@ -121,7 +198,13 @@ export default function Radio() {
         }
         const { sound: snd } = await Audio.Sound.createAsync(
           { uri: s.url_resolved || s.url },
-          { shouldPlay: true, isLooping: false }
+          {
+            shouldPlay: true,
+            isLooping: false,
+            // Small buffer for responsive low-bandwidth streaming.
+            progressUpdateIntervalMillis: 1000,
+            androidImplementation: 'MediaPlayer',
+          } as any
         );
         setSound(snd);
         setPlaying(s);
@@ -172,6 +255,7 @@ export default function Radio() {
     const isBusy = busyStation === item.stationuuid;
     const unlocked = isChannelUnlocked(item.stationuuid);
     const remainingMs = channelRemainingMs(item.stationuuid);
+    const isFav = favUuids.has(item.stationuuid);
     return (
       <Pressable
         testID={`station-${item.stationuuid}`}
@@ -208,6 +292,21 @@ export default function Radio() {
             </Text>
           )}
         </View>
+        <Pressable
+          hitSlop={10}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            toggleFavorite(item);
+          }}
+          style={styles.favBtn}
+          testID={`station-fav-${item.stationuuid}`}
+        >
+          <Ionicons
+            name={isFav ? 'heart' : 'heart-outline'}
+            size={22}
+            color={isFav ? COLORS.maroon : COLORS.textMuted}
+          />
+        </Pressable>
         {isBusy && <ActivityIndicator color={COLORS.maroon} />}
         {!unlocked && !isBusy && (
           <View style={styles.adHint} testID={`station-adhint-${item.stationuuid}`}>
@@ -305,17 +404,23 @@ export default function Radio() {
           <ActivityIndicator color={COLORS.maroon} size="large" />
           <Text style={styles.loadingText}>Loading stations…</Text>
         </View>
-      ) : stations.length === 0 ? (
+      ) : (category === 'favorites' ? favAsStations : stations).length === 0 ? (
         <View style={styles.loadingWrap}>
           <Ionicons name="sad-outline" size={32} color={COLORS.textMuted} />
-          <Text style={styles.loadingText}>No stations found.</Text>
+          <Text style={styles.loadingText}>
+            {category === 'favorites'
+              ? 'No favorites yet'
+              : 'No stations found.'}
+          </Text>
           <Text style={styles.loadingSubtle}>
-            Try changing filters or category.
+            {category === 'favorites'
+              ? 'Tap the heart icon on any station to save it here.'
+              : 'Try changing filters or category.'}
           </Text>
         </View>
       ) : (
         <FlatList
-          data={stations}
+          data={category === 'favorites' ? favAsStations : stations}
           keyExtractor={(item) => item.stationuuid}
           renderItem={renderItem}
           contentContainerStyle={{ padding: SPACING.md, paddingBottom: 80 }}
@@ -398,6 +503,48 @@ export default function Radio() {
                     ]}
                   >
                     {l.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Text style={styles.filterLabel}>India regional</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+            >
+              <Pressable
+                onPress={() => setRegionTag('')}
+                style={[
+                  styles.chip,
+                  regionTag === '' && styles.chipActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    regionTag === '' && { color: '#fff' },
+                  ]}
+                >
+                  Off
+                </Text>
+              </Pressable>
+              {INDIA_REGION_TAGS.map((r) => (
+                <Pressable
+                  key={r.tag}
+                  onPress={() => setRegionTag(r.tag)}
+                  style={[
+                    styles.chip,
+                    regionTag === r.tag && styles.chipActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      regionTag === r.tag && { color: '#fff' },
+                    ]}
+                  >
+                    {r.label}
                   </Text>
                 </Pressable>
               ))}
@@ -546,6 +693,12 @@ const styles = StyleSheet.create({
     color: COLORS.maroon,
     fontSize: FONT.size.xs,
     fontWeight: FONT.weight.bold,
+  },
+  favBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   nowPlaying: {
     flexDirection: 'row',

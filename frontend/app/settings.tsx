@@ -100,17 +100,18 @@ export default function Settings() {
           <Text style={styles.cardHead}>About</Text>
           <Text style={styles.about}>
             <Text style={styles.aboutBold}>UltraLite</Text> is a lightweight
-            browsing utility optimised for 2G (64kbps) networks using an
-            Opera-Mini-style hybrid: ads and trackers are blocked early, images
-            are blurred until you tap them, decorative CSS and heavy media are
-            stripped, and a mobile user-agent forces sites to serve their
+            browsing utility optimised for 2G (64kbps) networks. Pages are
+            fetched on-device, ads and trackers are blocked, scripts and heavy
+            CSS are stripped, images become empty placeholders (tap to reveal
+            on login pages) and a mobile user-agent forces sites to serve their
             lightweight versions.{'\n\n'}
             Radio streams are powered by the open community catalog
-            radio-browser.info, filtered to ≤ 64kbps for low-bandwidth use.
+            radio-browser.info, filtered to ≤ 48 kbps for low-bandwidth use.
             {'\n\n'}
             <Text style={styles.aboutBold}>No Logs Policy:</Text> Your browsing
-            history, bookmarks, downloads and preferences are stored only on
-            this device (SQLite). Nothing is sent to any UltraLite server.
+            history, bookmarks, downloads, radio favourites and preferences are
+            stored only on this device (SQLite). Nothing is sent to any
+            UltraLite server.
           </Text>
         </View>
       </ScrollView>

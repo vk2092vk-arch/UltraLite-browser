@@ -1,7 +1,8 @@
 // Centralized AdMob lifecycle manager.
-// - App Open: preloaded on splash, shown when foregrounded (after first content load).
-// - Interstitial: pre-load at 15th click, show at 30th click.
-// - Rewarded: shown on demand from Radio page; grants 30-min unlock.
+// - App Open: preloaded on splash AND on every background->foreground transition.
+// - Interstitial: pre-load at 10th click, show at 15th click.
+// - Rewarded: shown on demand from Radio page; grants per-channel 30-min unlock.
+import { AppState, AppStateStatus } from 'react-native';
 import {
   AppOpenAd,
   InterstitialAd,
@@ -33,6 +34,32 @@ export async function initAds(): Promise<void> {
     initialized = true;
   } catch (e) {
     console.warn('[Ads] init error', e);
+  }
+  // Auto-show App Open on every background→active transition (strict
+  // AppForeground trigger as per spec).
+  AppState.addEventListener('change', handleAppStateChange);
+}
+
+let _lastAppState: AppStateStatus = 'active';
+let _coldStart = true;
+
+function handleAppStateChange(next: AppStateStatus) {
+  const wasBackground =
+    _lastAppState === 'background' || _lastAppState === 'inactive';
+  _lastAppState = next;
+  if (next !== 'active') return;
+  if (_coldStart) {
+    _coldStart = false;
+    return; // splash screen handles first show
+  }
+  if (wasBackground) {
+    // Small delay so UI animations finish smoothly before overlaying ad.
+    setTimeout(() => {
+      if (!showAppOpenIfReady()) {
+        // Wasn't ready — preload for next time.
+        preloadAppOpen();
+      }
+    }, 400);
   }
 }
 

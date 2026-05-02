@@ -1,15 +1,19 @@
-// Home — Browser screen.
-// UltraLite mode uses an Opera Mini / Facebook Basic hybrid:
-//   • Keep JS + CSS enabled (login pages / interactive sites keep working)
-//   • Use Chrome-Android Mobile User-Agent so sites serve their mobile build
-//   • Inject aggressive ad/tracker blocker EARLY (before content loads)
-//   • Blur images by default (tap-to-reveal), remove video/iframe/canvas
-//   • Strip decorative CSS (backgrounds, shadows, animations) — keep layout
-// Normal mode = plain WebView, no injections.
+// Home — Browser + landing page.
+// UltraLite mode architecture (pure-text data-saver):
+//   • Login pages (detected by URL pattern) → normal WebView with JS on.
+//   • All other pages → RN fetches HTML, strips every script/style/image/
+//     iframe/video, injects B&W pure-text CSS, then renders via
+//     source={{ html, baseUrl }}. Sub-navigations are intercepted and
+//     re-filtered. Result: true 64kbps-friendly reading.
+// Normal mode → plain WebView, no injections.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -33,144 +37,43 @@ import {
   useAppState,
 } from '../src/state/appState';
 import { buildSearchUrl, deriveTitle } from '../src/utils/url';
-import { addBookmark, addHistory, getHistory, HistoryItem } from '../src/storage/db';
+import {
+  addBookmark,
+  addHistory,
+  addShortcut,
+  getShortcuts,
+  removeShortcut,
+  Shortcut,
+} from '../src/storage/db';
 import { trackClick } from '../src/ads/AdManager';
 import { isDownloadUrl, downloadFile } from '../src/utils/downloads';
+import { fetchCleanHtml, isLoginUrl } from '../src/utils/ultraliteFetch';
 
-// Chrome-Android mobile UA so sites serve their lightweight mobile version.
+// Chrome-Android mobile UA so sites serve their lightweight mobile build.
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
-// Runs BEFORE any page JS — monkey-patches XHR/fetch/createElement to block
-// ad + tracker domains. Saves bandwidth AND prevents scripts from injecting
-// more scripts. Reference: uBlock Origin's easy-list (short version).
-const AD_BLOCK_EARLY = `
-(function() {
+// Light ad-block for login-page WebViews (UltraLite). Pure-text pages are
+// already clean so they don't need this.
+const LOGIN_PAGE_CSS = `
+(function(){
   try {
-    var BLOCK = /googletagmanager|google-analytics|googlesyndication|doubleclick|adservice|adnxs|adsrvr|facebook\\.net|connect\\.facebook|fbcdn\\.net\\/rsrc|scorecardresearch|chartbeat|amazon-adsystem|moatads|taboola|outbrain|quantserve|bing\\.com\\/action|hotjar|criteo|rubiconproject|pubmatic|openx|adform|yieldmo|smartadserver|adroll|indexexchange|krxd|adobedtm|branch\\.io\\/v1|optimizely|segment\\.io|mixpanel|amplitude|fullstory|clarity\\.ms|newrelic|sentry-cdn|tiktok\\.com\\/pixel/i;
-    // Override fetch
-    if (window.fetch) {
-      var of = window.fetch;
-      window.fetch = function(u) {
-        try {
-          var url = typeof u === 'string' ? u : (u && u.url) || '';
-          if (BLOCK.test(url)) return Promise.reject(new Error('blocked'));
-        } catch(e){}
-        return of.apply(this, arguments);
-      };
-    }
-    // Override XHR
-    if (window.XMLHttpRequest) {
-      var op = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function(m, u) {
-        try { if (typeof u === 'string' && BLOCK.test(u)) { this._ul_blocked = true; } } catch(e){}
-        return op.apply(this, arguments);
-      };
-      var os = XMLHttpRequest.prototype.send;
-      XMLHttpRequest.prototype.send = function() {
-        if (this._ul_blocked) { try { this.abort(); } catch(e){} return; }
-        return os.apply(this, arguments);
-      };
-    }
-    // Override createElement for <script> & <iframe>
-    var oc = document.createElement.bind(document);
-    document.createElement = function(tag) {
-      var el = oc(tag);
-      var t = (tag||'').toLowerCase();
-      if (t === 'script' || t === 'iframe' || t === 'img') {
-        try {
-          var proto = t === 'script' ? HTMLScriptElement.prototype :
-                      t === 'iframe' ? HTMLIFrameElement.prototype :
-                                       HTMLImageElement.prototype;
-          var desc = Object.getOwnPropertyDescriptor(proto, 'src');
-          if (desc && desc.set) {
-            Object.defineProperty(el, 'src', {
-              configurable: true,
-              get: desc.get,
-              set: function(v) {
-                if (typeof v === 'string' && BLOCK.test(v)) return;
-                desc.set.call(this, v);
-              }
-            });
-          }
-        } catch(e){}
-      }
-      return el;
-    };
+    var css = document.createElement('style');
+    css.innerHTML = '[class*="cookie" i],[class*="consent" i],[class*="gdpr" i],[class*="popup-ad" i]{display:none!important;}img,picture,source{max-width:140px!important;max-height:140px!important;filter:grayscale(1) blur(4px)!important;}';
+    (document.head || document.documentElement).appendChild(css);
   } catch(e){}
   true;
 })();
 `;
 
-// Runs AFTER content loads — aesthetic + image-blur + element removal.
-// Preserves layout (flex/position) so login forms stay aligned.
-const ULTRA_INJECTED_JS = `
-(function() {
+function faviconUrl(url: string, size = 64): string {
   try {
-    var style = document.createElement('style');
-    style.innerHTML = \`
-      /* Keep pictures loadable but low-impact — user taps to fully reveal. */
-      img, picture, source {
-        filter: blur(14px) grayscale(0.4) !important;
-        opacity: 0.7 !important;
-        max-width: 140px !important;
-        max-height: 140px !important;
-        cursor: pointer !important;
-      }
-      img.__ul_revealed {
-        filter: none !important;
-        opacity: 1 !important;
-        max-width: 100% !important;
-        max-height: none !important;
-      }
-      /* Kill bandwidth-heavy embeds. */
-      video, canvas, embed, object { display: none !important; }
-      iframe:not([src*="recaptcha"]):not([src*="hcaptcha"]):not([src*="challenge"]) {
-        display: none !important;
-      }
-      /* Strip decorative CSS that wastes paint + downloads. Keep layout alive. */
-      * {
-        background-image: none !important;
-        box-shadow: none !important;
-        text-shadow: none !important;
-        transition: none !important;
-        animation: none !important;
-        background-attachment: scroll !important;
-      }
-      /* Hide obvious ad/cookie/popup clutter but NOT login forms. */
-      [class*="cookie"], [class*="consent"], [class*="gdpr"],
-      [class*="newsletter"], [class*="subscribe-pop"],
-      [class*="popup-ad"], [class*="ad-container"],
-      [class*="banner-ad"], [id*="cookie-banner"], [id*="gdpr"] {
-        display: none !important;
-      }
-    \`;
-    (document.head || document.documentElement).appendChild(style);
-
-    // Tap-to-reveal — click an image once to load the full version.
-    document.addEventListener('click', function(e) {
-      var t = e.target;
-      if (t && t.tagName === 'IMG' && !t.classList.contains('__ul_revealed')) {
-        e.preventDefault();
-        e.stopPropagation();
-        t.classList.add('__ul_revealed');
-      }
-    }, true);
-
-    // Expose a message handler so RN can intercept download clicks.
-    document.addEventListener('click', function(e) {
-      var a = e.target && e.target.closest ? e.target.closest('a') : null;
-      if (a && a.href && (a.hasAttribute('download') || a.getAttribute('download') !== null)) {
-        try {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'download', url: a.href }));
-          e.preventDefault();
-        } catch(err){}
-      }
-    }, true);
-  } catch(e) {}
-  true;
-})();
-`;
+    const u = new URL(url);
+    return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=${size}`;
+  } catch {
+    return '';
+  }
+}
 
 export default function Home() {
   const router = useRouter();
@@ -181,28 +84,68 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [pageTitle, setPageTitle] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [canGoBack, setCanGoBack] = useState(false);
+  const [shortcuts, setShortcuts] = useState<Shortcut[]>([]);
+  const [addShortcutOpen, setAddShortcutOpen] = useState(false);
+  const [newShortcutName, setNewShortcutName] = useState('');
+  const [newShortcutUrl, setNewShortcutUrl] = useState('');
+
+  // UltraLite pure-text state
+  const [htmlContent, setHtmlContent] = useState<string>('');
+  const [renderMode, setRenderMode] = useState<'none' | 'uri' | 'html'>('none');
+
   const webRef = useRef<WebView>(null);
 
   useEffect(() => {
     hydrate();
-    refreshHistory();
+    refreshShortcuts();
   }, []);
 
-  const refreshHistory = useCallback(async () => {
-    setHistory(await getHistory());
+  const refreshShortcuts = useCallback(async () => {
+    setShortcuts(await getShortcuts());
   }, []);
 
   const ultraLite = state.hydrated ? state.ultraLite : getUltraLite();
+
+  // Decide how to render a URL: uri (normal) or html (ultralite pure-text).
+  const openUrl = useCallback(
+    async (target: string) => {
+      setUrl(target);
+      if (!target) {
+        setRenderMode('none');
+        return;
+      }
+      if (!ultraLite || isLoginUrl(target)) {
+        setRenderMode('uri');
+        setHtmlContent('');
+        return;
+      }
+      // UltraLite pure-text mode
+      setLoading(true);
+      setProgress(0.1);
+      try {
+        const clean = await fetchCleanHtml(target);
+        setHtmlContent(clean);
+        setRenderMode('html');
+        setPageTitle(deriveTitle(target));
+        addHistory(deriveTitle(target), target).catch(() => {});
+      } catch {
+        setRenderMode('uri');
+      } finally {
+        setLoading(false);
+        setProgress(1);
+      }
+    },
+    [ultraLite]
+  );
 
   const goSearch = (raw?: string) => {
     const text = (raw ?? input).trim();
     if (!text) return;
     Keyboard.dismiss();
     const target = buildSearchUrl(text, ultraLite);
-    setUrl(target);
     setInput(text);
+    openUrl(target);
     trackClick();
   };
 
@@ -210,19 +153,18 @@ export default function Home() {
     (navState: any) => {
       setCanGoBack(navState.canGoBack);
       if (navState.title) setPageTitle(navState.title);
-      if (navState.url && !navState.loading) {
+      if (navState.url && !navState.loading && renderMode === 'uri') {
         const finalTitle = navState.title || deriveTitle(navState.url);
-        addHistory(finalTitle, navState.url).then(refreshHistory).catch(() => {});
+        addHistory(finalTitle, navState.url).catch(() => {});
       }
     },
-    [refreshHistory]
+    [renderMode]
   );
 
   const handleToggle = (v: boolean) => {
     setUltraLite(v);
-    // Re-load current URL with new settings applied.
-    if (url && webRef.current) {
-      try { webRef.current.reload(); } catch {}
+    if (url) {
+      openUrl(url); // re-open with new mode
     }
     trackClick();
   };
@@ -232,6 +174,39 @@ export default function Home() {
     await downloadFile(dlUrl);
   }, []);
 
+  const onShortcutLongPress = (s: Shortcut) => {
+    Alert.alert(
+      'Remove shortcut',
+      `Delete "${s.name}" from your home icons?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await removeShortcut(s.id);
+            await refreshShortcuts();
+          },
+        },
+      ]
+    );
+  };
+
+  const saveNewShortcut = async () => {
+    const name = newShortcutName.trim();
+    let u = newShortcutUrl.trim();
+    if (!name || !u) {
+      Alert.alert('Missing info', 'Enter both a name and a URL.');
+      return;
+    }
+    if (!/^https?:\/\//i.test(u)) u = `https://${u}`;
+    await addShortcut(name, u);
+    setNewShortcutName('');
+    setNewShortcutUrl('');
+    setAddShortcutOpen(false);
+    await refreshShortcuts();
+  };
+
   const menuItems = useMemo(
     () => [
       {
@@ -239,7 +214,7 @@ export default function Home() {
         label: 'New Tab',
         icon: 'add-outline' as const,
         onPress: () => {
-          setUrl('');
+          openUrl('');
           setInput('');
           setPageTitle('');
         },
@@ -285,10 +260,17 @@ export default function Home() {
         onPress: () => router.push('/settings'),
       },
     ],
-    [url, pageTitle, router]
+    [url, pageTitle, router, openUrl]
   );
 
   const showHome = !url;
+
+  // Theme: Normal mode → white body, maroon header only.
+  // UltraLite mode → current soft-gray accent surfaces.
+  const normalTheme = !ultraLite;
+  const bodyBg = normalTheme ? '#FFFFFF' : COLORS.bg;
+  const cardBg = normalTheme ? '#FFFFFF' : COLORS.card;
+  const cardBorder = normalTheme ? '#EEEEEE' : COLORS.border;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -297,7 +279,7 @@ export default function Home() {
         onToggleMode={handleToggle}
         onMenu={() => setMenuOpen(true)}
         onLogo={() => {
-          setUrl('');
+          openUrl('');
           setInput('');
           setPageTitle('');
         }}
@@ -336,12 +318,12 @@ export default function Home() {
       </View>
 
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, backgroundColor: bodyBg }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {showHome ? (
           <ScrollView
-            contentContainerStyle={styles.homeScroll}
+            contentContainerStyle={[styles.homeScroll, { backgroundColor: bodyBg }]}
             keyboardShouldPersistTaps="handled"
           >
             <Pressable
@@ -349,7 +331,7 @@ export default function Home() {
                 router.push('/radio');
                 trackClick();
               }}
-              style={styles.shortcutCard}
+              style={[styles.shortcutCard, { backgroundColor: cardBg, borderColor: cardBorder }]}
               testID="home-radio-card"
             >
               <View style={styles.shortcutRow}>
@@ -375,40 +357,53 @@ export default function Home() {
               </Text>
             </Pressable>
 
-            <View style={styles.historyCard}>
-              <View style={styles.historyHead}>
-                <Ionicons name="time-outline" size={20} color={COLORS.text} />
-                <Text style={styles.historyTitle}>History</Text>
+            <View style={[styles.appsCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
+              <View style={styles.appsHead}>
+                <Ionicons name="apps-outline" size={20} color={COLORS.text} />
+                <Text style={styles.appsTitle}>Top Apps</Text>
+                <Text style={styles.appsHint}>Long-press to remove</Text>
               </View>
-              {history.length === 0 ? (
-                <Text style={styles.historyEmpty}>
-                  No history yet. Search something to begin.
-                </Text>
-              ) : (
-                history.slice(0, 6).map((h) => (
+              <View style={styles.appsGrid}>
+                {shortcuts.map((s) => (
                   <Pressable
-                    key={h.id}
+                    key={s.id}
                     onPress={() => {
-                      setUrl(h.url);
-                      setInput('');
-                      setPageTitle(h.title);
+                      openUrl(s.url);
                       trackClick();
                     }}
-                    style={styles.historyRow}
-                    testID={`history-row-${h.id}`}
+                    onLongPress={() => onShortcutLongPress(s)}
+                    delayLongPress={400}
+                    style={styles.appTile}
+                    testID={`shortcut-${s.id}`}
                   >
-                    <Text style={styles.historyText} numberOfLines={1}>
-                      {h.title}
+                    <View style={styles.appIconWrap}>
+                      <Image
+                        source={{ uri: faviconUrl(s.url, 64) }}
+                        style={styles.appIcon}
+                      />
+                    </View>
+                    <Text style={styles.appLabel} numberOfLines={1}>
+                      {s.name}
                     </Text>
                   </Pressable>
-                ))
-              )}
+                ))}
+                <Pressable
+                  onPress={() => setAddShortcutOpen(true)}
+                  style={styles.appTile}
+                  testID="shortcut-add"
+                >
+                  <View style={[styles.appIconWrap, styles.appIconAdd]}>
+                    <Ionicons name="add" size={26} color={COLORS.maroon} />
+                  </View>
+                  <Text style={styles.appLabel}>Add</Text>
+                </Pressable>
+              </View>
             </View>
 
             <Text style={styles.modeHint}>
               Mode:{' '}
               <Text style={{ color: COLORS.maroon, fontWeight: '700' }}>
-                {ultraLite ? 'UltraLite (Data Saver)' : 'Normal'}
+                {ultraLite ? 'UltraLite (Pure Text)' : 'Normal'}
               </Text>
             </Text>
           </ScrollView>
@@ -421,57 +416,70 @@ export default function Home() {
                 />
               </View>
             )}
-            <WebView
-              ref={webRef}
-              source={{ uri: url }}
-              style={{ flex: 1, backgroundColor: '#fff' }}
-              originWhitelist={['*']}
-              javaScriptEnabled={true}
-              domStorageEnabled
-              cacheEnabled
-              thirdPartyCookiesEnabled
-              sharedCookiesEnabled
-              setSupportMultipleWindows={false}
-              mediaPlaybackRequiresUserAction
-              allowsFullscreenVideo={!ultraLite}
-              onLoadStart={() => setLoading(true)}
-              onLoadEnd={() => {
-                setLoading(false);
-                setProgress(1);
-              }}
-              onLoadProgress={(e) =>
-                setProgress(e.nativeEvent.progress)
-              }
-              onNavigationStateChange={onNav}
-              onShouldStartLoadWithRequest={(req) => {
-                const u = req.url || '';
-                // Intercept downloadable URLs — route to our Downloads manager.
-                if (isDownloadUrl(u)) {
-                  handleDownload(u);
-                  return false;
+            {renderMode === 'html' && loading ? (
+              <View style={styles.loaderWrap}>
+                <ActivityIndicator color={COLORS.maroon} size="large" />
+                <Text style={styles.loaderText}>
+                  Loading… stripping ads &amp; heavy content for 2G
+                </Text>
+              </View>
+            ) : (
+              <WebView
+                ref={webRef}
+                source={
+                  renderMode === 'html'
+                    ? { html: htmlContent, baseUrl: url }
+                    : { uri: url }
                 }
-                return true;
-              }}
-              onMessage={(event) => {
-                try {
-                  const msg = JSON.parse(event.nativeEvent.data);
-                  if (msg && msg.type === 'download' && msg.url) {
-                    handleDownload(msg.url);
+                style={{ flex: 1, backgroundColor: '#fff' }}
+                originWhitelist={['*']}
+                javaScriptEnabled={renderMode !== 'html'}
+                domStorageEnabled
+                cacheEnabled
+                thirdPartyCookiesEnabled
+                sharedCookiesEnabled
+                setSupportMultipleWindows={false}
+                mediaPlaybackRequiresUserAction
+                allowsFullscreenVideo={!ultraLite}
+                onLoadStart={() => setLoading(true)}
+                onLoadEnd={() => {
+                  setLoading(false);
+                  setProgress(1);
+                }}
+                onLoadProgress={(e) =>
+                  setProgress(e.nativeEvent.progress)
+                }
+                onNavigationStateChange={onNav}
+                onShouldStartLoadWithRequest={(req) => {
+                  const u = req.url || '';
+                  if (!u.startsWith('http') && !u.startsWith('about:')) {
+                    return true; // allow file:/, intent:, mailto:, tel:
                   }
-                } catch {}
-              }}
-              injectedJavaScriptBeforeContentLoaded={
-                ultraLite ? AD_BLOCK_EARLY : ''
-              }
-              injectedJavaScript={ultraLite ? ULTRA_INJECTED_JS : ''}
-              userAgent={ultraLite ? MOBILE_UA : undefined}
-            />
+                  // Intercept downloads.
+                  if (isDownloadUrl(u)) {
+                    handleDownload(u);
+                    return false;
+                  }
+                  // In pure-text mode: re-fetch & filter on link clicks.
+                  if (renderMode === 'html' && u !== url) {
+                    openUrl(u);
+                    return false;
+                  }
+                  return true;
+                }}
+                injectedJavaScript={
+                  renderMode === 'uri' && ultraLite ? LOGIN_PAGE_CSS : ''
+                }
+                userAgent={ultraLite ? MOBILE_UA : undefined}
+              />
+            )}
             <View style={styles.navBar}>
               <Pressable
                 onPress={() => {
-                  if (canGoBack) webRef.current?.goBack();
-                  else {
-                    setUrl('');
+                  if (renderMode === 'uri' && canGoBack) {
+                    webRef.current?.goBack();
+                  } else {
+                    openUrl('');
                     setInput('');
                   }
                   trackClick();
@@ -487,7 +495,11 @@ export default function Home() {
               </Pressable>
               <Pressable
                 onPress={() => {
-                  webRef.current?.reload();
+                  if (renderMode === 'html') {
+                    openUrl(url);
+                  } else {
+                    webRef.current?.reload();
+                  }
                   trackClick();
                 }}
                 style={styles.navBtn}
@@ -497,7 +509,7 @@ export default function Home() {
               </Pressable>
               <Pressable
                 onPress={() => {
-                  setUrl('');
+                  openUrl('');
                   setInput('');
                   setPageTitle('');
                 }}
@@ -525,6 +537,57 @@ export default function Home() {
         onClose={() => setMenuOpen(false)}
         items={menuItems}
       />
+
+      {/* Add shortcut modal */}
+      <Modal
+        visible={addShortcutOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddShortcutOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setAddShortcutOpen(false)}
+        >
+          <View style={styles.modalCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.modalTitle}>Add app shortcut</Text>
+            <TextInput
+              placeholder="Name (e.g. Wikipedia)"
+              placeholderTextColor={COLORS.textMuted}
+              style={styles.modalInput}
+              value={newShortcutName}
+              onChangeText={setNewShortcutName}
+              testID="shortcut-name-input"
+            />
+            <TextInput
+              placeholder="URL (e.g. wikipedia.org)"
+              placeholderTextColor={COLORS.textMuted}
+              style={styles.modalInput}
+              value={newShortcutUrl}
+              onChangeText={setNewShortcutUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              testID="shortcut-url-input"
+            />
+            <View style={styles.modalRow}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                onPress={() => setAddShortcutOpen(false)}
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnPrimary]}
+                onPress={saveNewShortcut}
+                testID="shortcut-save-btn"
+              >
+                <Text style={styles.modalBtnPrimaryText}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -551,17 +614,14 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   homeScroll: {
-    backgroundColor: COLORS.bg,
     padding: SPACING.md,
     paddingBottom: SPACING.xxl,
   },
   shortcutCard: {
-    backgroundColor: COLORS.card,
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   shortcutRow: {
     flexDirection: 'row',
@@ -579,31 +639,58 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONT.size.sm,
   },
-  historyCard: {
-    backgroundColor: COLORS.card,
+  appsCard: {
     borderRadius: RADIUS.lg,
-    padding: SPACING.lg,
+    padding: SPACING.md,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
-  historyHead: {
+  appsHead: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginBottom: SPACING.sm,
   },
-  historyTitle: {
+  appsTitle: {
+    flex: 1,
     fontSize: FONT.size.lg,
     fontWeight: FONT.weight.bold,
     color: COLORS.text,
   },
-  historyEmpty: {
-    color: COLORS.textMuted,
-    fontStyle: 'italic',
-    paddingVertical: SPACING.md,
+  appsHint: { color: COLORS.textMuted, fontSize: FONT.size.xs },
+  appsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingVertical: SPACING.xs,
   },
-  historyRow: { paddingVertical: 10 },
-  historyText: { color: COLORS.text, fontSize: FONT.size.md },
+  appTile: {
+    width: '25%',
+    alignItems: 'center',
+    paddingVertical: SPACING.sm,
+  },
+  appIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: '#F5F3F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2DDDF',
+  },
+  appIcon: { width: 36, height: 36 },
+  appIconAdd: {
+    backgroundColor: '#FFF',
+    borderStyle: 'dashed',
+    borderColor: COLORS.maroon,
+  },
+  appLabel: {
+    marginTop: 6,
+    fontSize: FONT.size.xs,
+    color: COLORS.text,
+    textAlign: 'center',
+    maxWidth: '100%',
+  },
   modeHint: {
     textAlign: 'center',
     marginTop: SPACING.lg,
@@ -616,6 +703,15 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.cardSoft,
   },
   progressFill: { height: 3, backgroundColor: COLORS.maroon },
+  loaderWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    padding: SPACING.lg,
+    backgroundColor: '#fff',
+  },
+  loaderText: { color: COLORS.textMuted, fontSize: FONT.size.sm, textAlign: 'center' },
   navBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -638,5 +734,61 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONT.size.xs,
     paddingHorizontal: SPACING.sm,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SPACING.lg,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#fff',
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+  },
+  modalTitle: {
+    fontSize: FONT.size.xl,
+    fontWeight: FONT.weight.bold,
+    color: COLORS.text,
+    marginBottom: SPACING.md,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 12,
+    marginTop: SPACING.sm,
+    fontSize: FONT.size.md,
+    color: COLORS.text,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: SPACING.lg,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+  },
+  modalBtnGhost: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalBtnGhostText: {
+    color: COLORS.text,
+    fontWeight: FONT.weight.semibold,
+  },
+  modalBtnPrimary: {
+    backgroundColor: COLORS.maroon,
+  },
+  modalBtnPrimaryText: {
+    color: '#fff',
+    fontWeight: FONT.weight.bold,
   },
 });
