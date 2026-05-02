@@ -71,9 +71,14 @@ export async function searchStations(opts: SearchOpts = {}): Promise<Station[]> 
   params.set('reverse', 'true');
   params.set('limit', String(opts.limit ?? 40));
   if (opts.offset) params.set('offset', String(opts.offset));
-  // Strict bitrate cap for 2G — prefer ≤ 48 kbps, minimum 24 kbps.
-  params.set('bitrateMax', String(opts.maxBitrate ?? 48));
-  params.set('bitrateMin', String(opts.minBitrate ?? 24));
+  // 2G bitrate cap: ≤ 64 kbps covers all 32 / 48 / 64 kbps streams and
+  // anything below — they all play smoothly on a 2G/EDGE link with at
+  // least a small headroom margin.  Min 24 kbps filters out broken/zero
+  // entries the catalog occasionally returns.
+  const cap = opts.maxBitrate ?? 64;
+  const floor = opts.minBitrate ?? 24;
+  params.set('bitrateMax', String(cap));
+  params.set('bitrateMin', String(floor));
   if (opts.country) params.set('country', opts.country);
   if (opts.language) params.set('language', opts.language.toLowerCase());
   if (opts.query) params.set('name', opts.query);
@@ -89,9 +94,11 @@ export async function searchStations(opts: SearchOpts = {}): Promise<Station[]> 
     const r = await fetch(url, { headers: COMMON_HEADERS });
     if (!r.ok) return [];
     const data: Station[] = await r.json();
-    // Additional client-side cap (some servers ignore bitrateMax).
+    // Hard client-side cap (some servers ignore bitrateMax) and drop any
+    // station with zero / negative bitrate (catalog noise — those streams
+    // are unreliable and cause buffering loops).
     return data.filter(
-      (s) => s.bitrate <= (opts.maxBitrate ?? 48) && !!s.url_resolved
+      (s) => s.bitrate > 0 && s.bitrate <= cap && !!s.url_resolved
     );
   } catch (e) {
     console.warn('[radio] search err', e);
@@ -110,8 +117,10 @@ export async function searchByTag(
   params.set('order', 'votes');
   params.set('reverse', 'true');
   params.set('limit', String(opts.limit ?? 40));
-  params.set('bitrateMax', String(opts.maxBitrate ?? 48));
-  params.set('bitrateMin', String(opts.minBitrate ?? 24));
+  const cap = opts.maxBitrate ?? 64;
+  const floor = opts.minBitrate ?? 24;
+  params.set('bitrateMax', String(cap));
+  params.set('bitrateMin', String(floor));
   params.set('tag', tag);
   try {
     const r = await fetch(
@@ -121,7 +130,7 @@ export async function searchByTag(
     if (!r.ok) return [];
     const data: Station[] = await r.json();
     return data.filter(
-      (s) => s.bitrate <= (opts.maxBitrate ?? 48) && !!s.url_resolved
+      (s) => s.bitrate > 0 && s.bitrate <= cap && !!s.url_resolved
     );
   } catch {
     return [];
@@ -200,19 +209,34 @@ export const INDIA_FM_FEATURED: { name: string; label: string }[] = [
   { name: 'Club FM', label: 'Club FM 94.3' },
 ];
 
-/** Load the featured Indian FM roster.  Runs the searches in parallel,
- *  picks the highest-voted match per name, dedupes by stationuuid. */
+/** Load the featured Indian FM roster.  Runs the searches in parallel.
+ *  For each station NAME we pick the entry with the LOWEST bitrate that
+ *  still has a valid stream URL — that's the smoothest play on 32-64 kbps
+ *  links.  AAC / AAC+ codecs are preferred over MP3 (better quality at
+ *  low bitrates).  Dedupes by stationuuid. */
 export async function loadIndiaFmFeatured(): Promise<Station[]> {
   const results = await Promise.all(
     INDIA_FM_FEATURED.map((f) =>
-      searchByName(f.name, { country: 'India', limit: 5, maxBitrate: 64 })
+      searchByName(f.name, { country: 'India', limit: 8, maxBitrate: 64 })
     )
   );
   const out: Station[] = [];
   const seen = new Set<string>();
+  const codecScore = (codec: string): number => {
+    const c = (codec || '').toLowerCase();
+    if (c.includes('aac')) return 3; // aac, aac+, he-aac, he-aacv2
+    if (c.includes('opus')) return 2;
+    if (c.includes('mp3')) return 1;
+    return 0;
+  };
   for (const list of results) {
-    if (list.length === 0) continue;
-    const top = list[0];
+    if (!list || list.length === 0) continue;
+    // Sort: lowest bitrate first; if tied, prefer AAC > Opus > MP3.
+    const sorted = [...list].sort((a, b) => {
+      if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
+      return codecScore(b.codec) - codecScore(a.codec);
+    });
+    const top = sorted[0];
     if (!top || seen.has(top.stationuuid)) continue;
     seen.add(top.stationuuid);
     out.push(top);

@@ -194,6 +194,71 @@ agent_communication:
     - agent: "main"
       message: |
         Build #19 — AdMob/Play Console policy hardening + Indian FM roster.
+        Files touched: app/_layout.tsx (disclaimer rewritten — removed
+        "ads/trackers blocked", added attribution that radio streams are
+        owned & hosted by their broadcasters), app/settings.tsx (About
+        text mirrored), app/home.tsx (LOGIN_PAGE_CSS — removed
+        [class*="popup-ad"] + image blur, kept only cookie/consent/GDPR),
+        src/ads/AdManager.native.ts (App Open ad cooldowns: skip <30 s
+        background, min 4 min between shows), src/services/radioBrowser.ts
+        (added searchByName + INDIA_FM_FEATURED roster of 20 stations),
+        app/radio.tsx (added "🇮🇳 India FM" category + attribution footer).
+
+    - agent: "main"
+      message: |
+        Build #20 — Buffering fix on 32/48/64 kbps + AdMob hardening via
+        Global Radio Unlock (replaces per-channel ad gate).
+        Files touched:
+          • src/state/appState.ts — REWRITE. Removed per-channel unlock APIs
+            (isChannelUnlocked / channelRemainingMs / grantChannelReward /
+            unlockedChannels). Added GLOBAL Radio Unlock APIs:
+            isRadioUnlocked / radioRemainingMs / getRadioAdsWatched /
+            getRadioAdsRequired (=2) / getRadioAdsRemaining /
+            recordRadioAdWatched (returns {unlocked, watched, required}) /
+            grantRadioFallback / lockRadio.  Persistence: @ul/radioUnlock
+            JSON {exp, watched}. Hook ticks every 30 s so the timer
+            updates without user input.  AdMob rationale: the per-channel
+            model was an "ad-cluster" risk because radio streams are
+            third-party content; the global model is one ad-event per
+            session window — standard freemium pattern, far safer.
+          • src/services/radioBrowser.ts — Bumped maxBitrate cap from 48
+            → 64 kbps so all 32 / 48 / 64 kbps streams qualify (user's
+            target). Hard client-side cap + drop entries with bitrate ≤ 0
+            (catalog noise that causes buffering loops).  India FM
+            featured loader now picks the LOWEST-bitrate AAC entry per
+            station name (codec preference: AAC > Opus > MP3) so 32-kbps
+            streams play before 64-kbps ones — least buffering on weak
+            links.
+          • app/radio.tsx — Big REWRITE around playback + unlock UI:
+              - Removed per-station "Ad" badge / unlocked timer / lock
+                colour states.
+              - Added Global Unlock Card (locked state): maroon button
+                "Unlock Radio · 30 Minutes Ad-Free", "Watch X short ad(s)
+                to unlock every station", retry counter "n/10 — auto-grant
+                on slow link", progress bar, "X/2" badge.
+              - Added Unlocked Banner (green strip) with live countdown
+                "28m 14s left in this 30-min session", auto-refreshes via
+                useAppState's 30-s tick.
+              - handleUnlockTap: not-ready → preloadRewarded, attempt
+                counter ++; at 10 → grantRadioFallback (Network Grant);
+                ready → showRewarded → recordRadioAdWatched → unlock at 2.
+                User dismissals do NOT count as attempts.
+              - playStation: if unlocked → play directly (no per-channel
+                ad); else show hint pointing to the Unlock card at top.
+              - Buffering indicator on Now-Playing bar (ActivityIndicator
+                + "Buffering…" label) driven by expo-av's isBuffering
+                status callback.
+              - Audio config tuned for 2G: progressUpdateIntervalMillis
+                bumped 1000→2000 (less JS-thread polling on slow links),
+                kept androidImplementation: 'MediaPlayer' (lighter than
+                ExoPlayer for plain HTTP audio).
+              - Tightened error message: "try a lower-bitrate station
+                (32-48 kbps)" instead of generic failure.
+              - Removed unused useRef import + orphan styles
+                (stationTimer, adHint, adHintText, infoBanner, infoText).
+        TS compile clean (only pre-existing AdManager/AdBanner platform-
+        resolution warnings, unrelated). No testing agents invoked.
+        Ready for save-to-GitHub → GitHub Actions APK build #20.
         Files touched:
           • app/_layout.tsx — Disclaimer rewritten. Removed "ads and
             trackers are blocked" (could mislead AdMob review). New

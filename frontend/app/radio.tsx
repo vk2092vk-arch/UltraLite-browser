@@ -1,7 +1,7 @@
 // Radio & Music — categories, country/language filter, search, 64kbps strict.
 // Reward Ad gate: PER-CHANNEL — each station requires its own rewarded ad to
 // unlock 30-min playback. Other stations remain locked independently.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -36,11 +36,14 @@ import {
   isRewardedReady,
 } from '../src/ads/AdManager';
 import {
-  grantChannelReward,
-  isChannelUnlocked,
-  channelRemainingMs,
   hydrate,
   useAppState,
+  isRadioUnlocked,
+  radioRemainingMs,
+  recordRadioAdWatched,
+  grantRadioFallback,
+  getRadioAdsRemaining,
+  getRadioAdsRequired,
 } from '../src/state/appState';
 import {
   addRadioFavorite,
@@ -62,8 +65,11 @@ const CATEGORIES: { key: Category; label: string; icon: keyof typeof Ionicons.gl
 
 function formatRemaining(ms: number): string {
   if (ms <= 0) return '';
-  const totalMin = Math.ceil(ms / 60000);
-  return `${totalMin}m`;
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m <= 0) return `${s}s`;
+  return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
 export default function Radio() {
@@ -80,8 +86,14 @@ export default function Radio() {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState<Station | null>(null);
   const [busyStation, setBusyStation] = useState<string | null>(null);
+  const [buffering, setBuffering] = useState(false);
   const [favorites, setFavorites] = useState<RadioFav[]>([]);
   const [regionTag, setRegionTag] = useState<string>('');
+  // Tracks how many times the user has tapped "Watch Ad" while the SDK
+  // failed to deliver — when this hits 10, we grant the unlock anyway so
+  // 2G users are never permanently blocked.
+  const [unlockAttempts, setUnlockAttempts] = useState(0);
+  const NETWORK_GRANT_AT = 10;
 
   const refreshFavorites = useCallback(async () => {
     setFavorites(await getRadioFavorites());
@@ -199,11 +211,13 @@ export default function Radio() {
     } catch {}
     setSound(null);
     setPlaying(null);
+    setBuffering(false);
   }, [sound]);
 
   const startPlayback = useCallback(
     async (s: Station) => {
       setBusyStation(s.stationuuid);
+      setBuffering(true);
       try {
         if (sound) {
           await sound.unloadAsync().catch(() => {});
@@ -213,10 +227,28 @@ export default function Radio() {
           {
             shouldPlay: true,
             isLooping: false,
-            // Small buffer for responsive low-bandwidth streaming.
-            progressUpdateIntervalMillis: 1000,
+            // Lower polling overhead on weak networks; covers buffering
+            // without busy-looping the JS thread on 2G.
+            progressUpdateIntervalMillis: 2000,
+            // MediaPlayer is lighter than ExoPlayer for plain HTTP audio
+            // streams and tolerates intermittent 64-kbps links better.
             androidImplementation: 'MediaPlayer',
-          } as any
+          } as any,
+          // Status callback — drives the on-screen "Buffering…" indicator
+          // and recovers from end-of-stream stalls.
+          (status: any) => {
+            if (!status?.isLoaded) {
+              if (status?.error) {
+                console.warn('[radio] stream err', status.error);
+                setBuffering(false);
+              }
+              return;
+            }
+            // expo-av's `isBuffering` flag flips true while waiting for
+            // bytes. Mirror it into our own state so the UI can show a
+            // live spinner without re-rendering FlatList rows.
+            setBuffering(!!status.isBuffering && !status.isPlaying);
+          }
         );
         setSound(snd);
         setPlaying(s);
@@ -224,7 +256,10 @@ export default function Radio() {
         trackClick();
       } catch (e) {
         console.warn('[radio] play err', e);
-        alert('Failed to start the stream. Try another station.');
+        setBuffering(false);
+        alert(
+          'Stream failed to start. The broadcaster may be offline or your link is too slow — try a lower-bitrate station (32-48 kbps).'
+        );
       } finally {
         setBusyStation(null);
       }
@@ -232,60 +267,81 @@ export default function Radio() {
     [sound]
   );
 
-  const clickAttempts = useRef<Record<string, number>>({});
+  // Global Unlock handler — user taps the big card. Watches a rewarded ad,
+  // counts towards 2 ads, after the 2nd ad → 30-min unlock for ALL stations.
+  const handleUnlockTap = useCallback(async () => {
+    if (isRadioUnlocked()) return; // already unlocked, button shouldn't show
 
-  const playStation = useCallback(
-    async (s: Station) => {
-      // Per-channel unlock gate.
-      if (isChannelUnlocked(s.stationuuid)) {
-        await startPlayback(s);
-        return;
-      }
-      // Track failed attempts to watch a rewarded ad.
-      clickAttempts.current[s.stationuuid] =
-        (clickAttempts.current[s.stationuuid] || 0) + 1;
-      const attempts = clickAttempts.current[s.stationuuid];
-
-      // Not unlocked — user must watch a rewarded ad for THIS station.
-      if (!isRewardedReady()) {
-        preloadRewarded();
-        // After 10 failed attempts, grant unlock as a goodwill reward so the
-        // user is never stuck because of ad-fill issues.
-        if (attempts >= 10) {
-          await grantChannelReward(s.stationuuid);
-          clickAttempts.current[s.stationuuid] = 0;
-          alert('Ad unavailable — channel unlocked for 30 minutes as a bonus.');
-          await startPlayback(s);
-          return;
-        }
+    // No ad ready yet — count the failed attempt. After NETWORK_GRANT_AT
+    // (10) consecutive failures, fall back to a free 30-min Network Grant
+    // so 2G users are never permanently locked out.
+    if (!isRewardedReady()) {
+      preloadRewarded();
+      const next = unlockAttempts + 1;
+      setUnlockAttempts(next);
+      if (next >= NETWORK_GRANT_AT) {
+        await grantRadioFallback();
+        setUnlockAttempts(0);
         alert(
-          `Ad is loading… tap the station again in a few seconds.\n(Tries: ${attempts}/10 — auto-unlock at 10)`
+          '📡 Network Grant — Radio unlocked for 30 minutes.\n' +
+            'Ad service was unreachable on your slow link, so we unlocked it for free.'
         );
         return;
       }
-      let earned = false;
-      const ok = await showRewarded(async () => {
-        earned = true;
-        await grantChannelReward(s.stationuuid);
-      });
-      if (!ok || !earned) return;
-      clickAttempts.current[s.stationuuid] = 0;
-      // After reward granted, start playback.
-      await startPlayback(s);
+      alert(
+        `Ad still loading — please wait a moment and tap again.\n` +
+          `(${next}/${NETWORK_GRANT_AT} — auto-grant on slow network at ${NETWORK_GRANT_AT} tries)`
+      );
+      return;
+    }
+
+    // Ad is ready — show it and wait for the reward callback.
+    let earned = false;
+    const ok = await showRewarded(async () => {
+      earned = true;
+    });
+    if (!ok || !earned) {
+      // User dismissed or SDK errored — don't count as an attempt.
+      preloadRewarded();
+      return;
+    }
+    setUnlockAttempts(0); // reset on a successful reward
+    const result = await recordRadioAdWatched();
+    // Eagerly preload the next rewarded slot for the SECOND tap.
+    preloadRewarded();
+    if (result.unlocked) {
+      alert('🎉 Radio Unlocked!\nAll stations are Ad-Free for 30 minutes.');
+    } else {
+      const remaining = result.required - result.watched;
+      alert(
+        `Thanks! Watch ${remaining} more short ad to unlock all radio for 30 minutes.`
+      );
+    }
+  }, [unlockAttempts]);
+
+  // Tap on a station: if the section is unlocked, play. Otherwise hint.
+  const playStation = useCallback(
+    async (s: Station) => {
+      if (isRadioUnlocked()) {
+        await startPlayback(s);
+        return;
+      }
+      alert(
+        'Radio is locked.\n\nTap the green Unlock card at the top — watch 2 short ads (or 10 retries on slow network) to unlock ALL stations for 30 minutes.'
+      );
     },
     [startPlayback]
   );
 
-  const unlockedCount = useMemo(
-    () => Object.keys(state.unlockedChannels).length,
-    [state.unlockedChannels]
-  );
+  const radioUnlocked = state.radioUnlocked;
+  const remaining = state.radioRemainingMs;
+  const adsWatched = state.radioAdsWatched;
+  const adsRequired = state.radioAdsRequired;
+  const adsToGo = Math.max(0, adsRequired - adsWatched);
 
   const renderItem = ({ item }: { item: Station }) => {
     const isPlaying = playing?.stationuuid === item.stationuuid;
     const isBusy = busyStation === item.stationuuid;
-    const unlocked = isChannelUnlocked(item.stationuuid);
-    const remainingMs = channelRemainingMs(item.stationuuid);
     const isFav = favUuids.has(item.stationuuid);
     return (
       <Pressable
@@ -293,14 +349,19 @@ export default function Radio() {
         onPress={() => (isPlaying ? stop() : playStation(item))}
         style={[styles.stationCard, isPlaying && styles.stationPlaying]}
       >
-        <View style={[styles.stationIcon, !unlocked && styles.stationIconLocked]}>
+        <View
+          style={[
+            styles.stationIcon,
+            !radioUnlocked && styles.stationIconLocked,
+          ]}
+        >
           <Ionicons
             name={
               isBusy
                 ? 'hourglass'
                 : isPlaying
                 ? 'pause'
-                : unlocked
+                : radioUnlocked
                 ? 'play'
                 : 'lock-closed'
             }
@@ -317,11 +378,6 @@ export default function Radio() {
             {item.codec || 'audio'}
             {item.language ? ` • ${item.language}` : ''}
           </Text>
-          {unlocked && (
-            <Text style={styles.stationTimer}>
-              Unlocked · {formatRemaining(remainingMs)} left
-            </Text>
-          )}
         </View>
         <Pressable
           hitSlop={10}
@@ -339,12 +395,6 @@ export default function Radio() {
           />
         </Pressable>
         {isBusy && <ActivityIndicator color={COLORS.maroon} />}
-        {!unlocked && !isBusy && (
-          <View style={styles.adHint} testID={`station-adhint-${item.stationuuid}`}>
-            <Ionicons name="gift-outline" size={14} color={COLORS.maroon} />
-            <Text style={styles.adHintText}>Ad</Text>
-          </View>
-        )}
       </Pressable>
     );
   };
@@ -422,13 +472,58 @@ export default function Radio() {
         })}
       </ScrollView>
 
-      <View style={styles.infoBanner} testID="radio-info-banner">
-        <Ionicons name="information-circle-outline" size={18} color={COLORS.maroon} />
-        <Text style={styles.infoText}>
-          Tap a station — watch a short ad to unlock it for 30 minutes.
-          {unlockedCount > 0 ? `  (${unlockedCount} unlocked now)` : ''}
-        </Text>
-      </View>
+      {/* ── Global Unlock card ──
+          Locked  → big maroon button "Watch Ad to Unlock (X / 2)" + retry-counter sub-line
+          Unlocked → green strip showing live countdown until 30-min window ends */}
+      {radioUnlocked ? (
+        <View style={styles.unlockedBanner} testID="radio-unlocked-banner">
+          <Ionicons name="checkmark-circle" size={20} color="#fff" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.unlockedTitle}>Radio Unlocked · Ad-Free</Text>
+            <Text style={styles.unlockedSub}>
+              {formatRemaining(remaining)} left in this 30-min session
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <Pressable
+          onPress={handleUnlockTap}
+          style={styles.unlockCard}
+          testID="radio-unlock-btn"
+          android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
+        >
+          <View style={styles.unlockIcon}>
+            <Ionicons name="gift" size={22} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.unlockTitle}>
+              Unlock Radio · 30 Minutes Ad-Free
+            </Text>
+            <Text style={styles.unlockSub}>
+              Watch {adsToGo} short ad{adsToGo === 1 ? '' : 's'} to unlock
+              every station.
+              {unlockAttempts > 0
+                ? `  (${unlockAttempts}/${NETWORK_GRANT_AT} retries — auto-grant on slow link)`
+                : ''}
+            </Text>
+            <View style={styles.progressBar}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: `${Math.min(100, (adsWatched / adsRequired) * 100)}%`,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+          <View style={styles.unlockBadge}>
+            <Text style={styles.unlockBadgeText}>
+              {adsWatched}/{adsRequired}
+            </Text>
+          </View>
+        </Pressable>
+      )}
 
       {loading ? (
         <View style={styles.loadingWrap}>
@@ -473,8 +568,13 @@ export default function Radio() {
 
       {playing && (
         <View style={styles.nowPlaying} testID="now-playing-bar">
-          <View style={styles.npDot} />
+          {buffering ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <View style={styles.npDot} />
+          )}
           <Text style={styles.npText} numberOfLines={1}>
+            {buffering ? 'Buffering… ' : ''}
             {playing.name}
           </Text>
           <Pressable onPress={stop} style={styles.npStop} testID="np-stop">
@@ -670,22 +770,89 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     lineHeight: 18,
   },
-  infoBanner: {
+  // ── Global Unlock card (locked state) ──
+  unlockCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFF4E5',
+    gap: SPACING.md,
+    backgroundColor: COLORS.maroon,
     marginHorizontal: SPACING.md,
+    marginTop: 4,
     paddingHorizontal: SPACING.md,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: '#F0DFC3',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
   },
-  infoText: {
-    color: COLORS.text,
-    flex: 1,
+  unlockIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unlockTitle: {
+    color: '#fff',
+    fontSize: FONT.size.md,
+    fontWeight: FONT.weight.bold,
+  },
+  unlockSub: {
+    color: 'rgba(255,255,255,0.88)',
     fontSize: FONT.size.xs,
+    marginTop: 2,
+    fontWeight: FONT.weight.medium,
+  },
+  progressBar: {
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 2,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 4,
+    backgroundColor: '#FFD700',
+    borderRadius: 2,
+  },
+  unlockBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unlockBadgeText: {
+    color: '#fff',
+    fontWeight: FONT.weight.bold,
+    fontSize: FONT.size.md,
+  },
+  // ── Global Unlock card (unlocked state) ──
+  unlockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    backgroundColor: '#1B8A4E',
+    marginHorizontal: SPACING.md,
+    marginTop: 4,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+  },
+  unlockedTitle: {
+    color: '#fff',
+    fontSize: FONT.size.md,
+    fontWeight: FONT.weight.bold,
+  },
+  unlockedSub: {
+    color: 'rgba(255,255,255,0.92)',
+    fontSize: FONT.size.xs,
+    marginTop: 2,
     fontWeight: FONT.weight.medium,
   },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6 },
@@ -715,28 +882,6 @@ const styles = StyleSheet.create({
   },
   stationName: { color: COLORS.text, fontSize: FONT.size.md, fontWeight: FONT.weight.semibold },
   stationMeta: { color: COLORS.textMuted, fontSize: FONT.size.xs, marginTop: 2 },
-  stationTimer: {
-    marginTop: 2,
-    fontSize: FONT.size.xs,
-    color: COLORS.success,
-    fontWeight: FONT.weight.semibold,
-  },
-  adHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: RADIUS.pill,
-    backgroundColor: '#FDEEEE',
-    borderWidth: 1,
-    borderColor: COLORS.maroon,
-  },
-  adHintText: {
-    color: COLORS.maroon,
-    fontSize: FONT.size.xs,
-    fontWeight: FONT.weight.bold,
-  },
   favBtn: {
     width: 36,
     height: 36,
