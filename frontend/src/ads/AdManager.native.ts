@@ -1,0 +1,270 @@
+// Centralized AdMob lifecycle manager.
+// - App Open: preloaded on splash AND on every background->foreground transition.
+// - Interstitial: pre-load at 10th click, show at 15th click.
+// - Rewarded: shown on demand from Radio page; grants per-channel 30-min unlock.
+import { AppState, AppStateStatus } from 'react-native';
+import {
+  AppOpenAd,
+  InterstitialAd,
+  RewardedAd,
+  AdEventType,
+  RewardedAdEventType,
+  MobileAds,
+  MaxAdContentRating,
+} from 'react-native-google-mobile-ads';
+import {
+  AD_UNITS,
+  INTERSTITIAL_LOAD_AT,
+  INTERSTITIAL_SHOW_AT,
+  TEST_DEVICE_IDS,
+} from '../constants/ads';
+
+let initialized = false;
+
+export async function initAds(): Promise<void> {
+  if (initialized) return;
+  try {
+    await MobileAds().setRequestConfiguration({
+      maxAdContentRating: MaxAdContentRating.PG,
+      tagForChildDirectedTreatment: false,
+      tagForUnderAgeOfConsent: false,
+      testDeviceIdentifiers: TEST_DEVICE_IDS,
+    });
+    await MobileAds().initialize();
+    initialized = true;
+  } catch (e) {
+    console.warn('[Ads] init error', e);
+  }
+  // Auto-show App Open on every background→active transition (strict
+  // AppForeground trigger as per spec).
+  AppState.addEventListener('change', handleAppStateChange);
+}
+
+let _lastAppState: AppStateStatus = 'active';
+let _coldStart = true;
+let _backgroundedAt = 0; // timestamp when app went to background
+let _lastAppOpenShownAt = 0; // timestamp of last successful App Open show
+
+// AdMob best-practice cooldowns to avoid "App Open ad spam" policy flags:
+//   - Skip if user was in background for less than 30 seconds (treats brief
+//     switches like accidental notifications / quick tab changes as not a
+//     real return).
+//   - Min 4 minutes between two App Open shows (defensive — even Google's
+//     own examples avoid back-to-back impressions).
+const APPOPEN_MIN_BG_MS = 30 * 1000;
+const APPOPEN_MIN_GAP_MS = 4 * 60 * 1000;
+
+function handleAppStateChange(next: AppStateStatus) {
+  const wasBackground =
+    _lastAppState === 'background' || _lastAppState === 'inactive';
+  if (next === 'background' || next === 'inactive') {
+    _backgroundedAt = Date.now();
+  }
+  _lastAppState = next;
+  if (next !== 'active') return;
+  if (_coldStart) {
+    _coldStart = false;
+    return; // splash screen handles first show
+  }
+  if (!wasBackground) return;
+  const now = Date.now();
+  const awayMs = _backgroundedAt ? now - _backgroundedAt : 0;
+  const sinceLastShow = now - _lastAppOpenShownAt;
+  if (awayMs < APPOPEN_MIN_BG_MS) {
+    // Quick switch — not a real return, skip ad. Keep ad warm for next time.
+    return;
+  }
+  if (sinceLastShow < APPOPEN_MIN_GAP_MS) {
+    // Too soon since last App Open — respect frequency cap.
+    return;
+  }
+  // Small delay so UI animations finish smoothly before overlaying ad.
+  setTimeout(() => {
+    if (showAppOpenIfReady()) {
+      _lastAppOpenShownAt = Date.now();
+    } else {
+      // Wasn't ready — preload for next time.
+      preloadAppOpen();
+    }
+  }, 400);
+}
+
+// ---------- App Open ----------
+let appOpen: AppOpenAd | null = null;
+let appOpenReady = false;
+
+export function preloadAppOpen() {
+  appOpen = AppOpenAd.createForAdRequest(AD_UNITS.appOpen, {
+    requestNonPersonalizedAdsOnly: true,
+  });
+  const subLoaded = appOpen.addAdEventListener(AdEventType.LOADED, () => {
+    appOpenReady = true;
+  });
+  const subClosed = appOpen.addAdEventListener(AdEventType.CLOSED, () => {
+    appOpenReady = false;
+    // chain reload
+    setTimeout(() => preloadAppOpen(), 500);
+  });
+  const subError = appOpen.addAdEventListener(AdEventType.ERROR, () => {
+    appOpenReady = false;
+  });
+  try {
+    appOpen.load();
+  } catch (e) {
+    console.warn('[Ads] appOpen load err', e);
+  }
+  return () => {
+    subLoaded();
+    subClosed();
+    subError();
+  };
+}
+
+export function showAppOpenIfReady(): boolean {
+  if (appOpenReady && appOpen) {
+    try {
+      appOpen.show();
+      return true;
+    } catch (e) {
+      console.warn('[Ads] appOpen show err', e);
+    }
+  }
+  return false;
+}
+
+// ---------- Interstitial (click-counted) ----------
+let interstitial: InterstitialAd | null = null;
+let interReady = false;
+let clickCount = 0;
+
+function createInterstitial() {
+  interstitial = InterstitialAd.createForAdRequest(AD_UNITS.interstitial, {
+    requestNonPersonalizedAdsOnly: true,
+  });
+  interstitial.addAdEventListener(AdEventType.LOADED, () => {
+    interReady = true;
+  });
+  interstitial.addAdEventListener(AdEventType.CLOSED, () => {
+    interReady = false;
+    // re-create for next cycle
+    setTimeout(() => createInterstitial(), 1000);
+  });
+  interstitial.addAdEventListener(AdEventType.ERROR, () => {
+    interReady = false;
+  });
+}
+
+/**
+ * Call on every meaningful user click.
+ * - At 15th click: pre-load
+ * - At 30th click: show (and reset)
+ */
+export function trackClick() {
+  clickCount += 1;
+  if (clickCount === INTERSTITIAL_LOAD_AT) {
+    if (!interstitial) createInterstitial();
+    if (interstitial && !interReady) {
+      try { interstitial.load(); } catch {}
+    }
+  }
+  if (clickCount >= INTERSTITIAL_SHOW_AT) {
+    if (interReady && interstitial) {
+      try {
+        interstitial.show();
+        clickCount = 0;
+        interReady = false;
+      } catch (e) {
+        console.warn('[Ads] interstitial show err', e);
+      }
+    } else {
+      // not ready — try load again, push back the show window
+      if (!interstitial) createInterstitial();
+      if (interstitial) {
+        try { interstitial.load(); } catch {}
+      }
+      // small back-off so we don't spam
+      clickCount = INTERSTITIAL_LOAD_AT;
+    }
+  }
+}
+
+// ---------- Rewarded ----------
+let rewarded: RewardedAd | null = null;
+let rewardedReady = false;
+
+function createRewarded() {
+  rewarded = RewardedAd.createForAdRequest(AD_UNITS.rewarded, {
+    requestNonPersonalizedAdsOnly: true,
+  });
+  rewarded.addAdEventListener(RewardedAdEventType.LOADED, () => {
+    rewardedReady = true;
+  });
+  rewarded.addAdEventListener(AdEventType.CLOSED, () => {
+    rewardedReady = false;
+    // Build #28 — fix "second rewarded ad never loads" bug.
+    // Previously we created a fresh RewardedAd instance on CLOSED but
+    // never called .load() on it. Any preloadRewarded() call from the
+    // user code that landed BEFORE the 1s timeout would .load() the
+    // OLD (already-closed) instance — which then got replaced with a
+    // brand-new instance that nobody ever loaded. Result: 2nd tap on
+    // "Watch Ad" found rewardedReady=false and nothing happened.
+    // Fix: recreate AND immediately load() inside the same timeout so
+    // the new instance is guaranteed to be warming up.
+    setTimeout(() => {
+      createRewarded();
+      try {
+        rewarded?.load();
+      } catch {}
+    }, 1000);
+  });
+  rewarded.addAdEventListener(AdEventType.ERROR, () => {
+    rewardedReady = false;
+    // Build #28 — auto-retry on ERROR so a transient no-fill doesn't
+    // permanently dead-end the unlock flow on weak networks.
+    setTimeout(() => {
+      try {
+        rewarded?.load();
+      } catch {}
+    }, 3000);
+  });
+}
+
+export function preloadRewarded() {
+  if (!rewarded) createRewarded();
+  if (rewarded && !rewardedReady) {
+    try { rewarded.load(); } catch {}
+  }
+}
+
+export function showRewarded(onEarned: () => void): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!rewarded || !rewardedReady) {
+      preloadRewarded();
+      resolve(false);
+      return;
+    }
+    const sub = rewarded.addAdEventListener(
+      RewardedAdEventType.EARNED_REWARD,
+      () => {
+        onEarned();
+      }
+    );
+    const closeSub = rewarded.addAdEventListener(AdEventType.CLOSED, () => {
+      sub();
+      closeSub();
+      resolve(true);
+    });
+    try {
+      rewarded.show();
+    } catch (e) {
+      console.warn('[Ads] rewarded show err', e);
+      sub();
+      closeSub();
+      resolve(false);
+    }
+  });
+}
+
+export function isRewardedReady() {
+  return rewardedReady;
+}

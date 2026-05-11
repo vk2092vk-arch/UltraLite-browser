@@ -1,0 +1,76 @@
+{
+  "expo": {
+    "name": "UltraLite",
+    "slug": "ultralite",
+    "version": "1.0.1",
+    "orientation": "default",
+    "icon": "./assets/images/icon.png",
+    "scheme": "ultralite",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gemmiapps.ultralite"
+    },
+    "android": {
+      "package": "com.gemmiapps.ultralite",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "pan",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "WAKE_LOCK",
+        "FOREGROUND_SERVICE",
+        "com.google.android.gms.permission.AD_ID"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
+      "expo-web-browser",
+      "expo-dev-client",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-9675798593675825~9834036299",
+          "iosAppId": "ca-app-pub-9675798593675825~9834036299"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "newArchEnabled": true,
+            "ndkVersion": "27.1.12297006",
+            "extraProguardRules": "-keep class com.google.android.gms.ads.** { *; }"
+          }
+        }
+      ],
+      "expo-sqlite",
+      "./plugins/withRemoveRecordAudio.js"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
