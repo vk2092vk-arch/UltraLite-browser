@@ -18,6 +18,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Audio } from 'expo-av';
+import {
+  playStation as playbackPlay,
+  stopPlayback as playbackStop,
+  togglePause as playbackTogglePause,
+  subscribe as playbackSubscribe,
+  PlaybackState,
+} from '../src/services/playback';
 import AdBanner from '../src/components/AdBanner';
 import { COLORS, FONT, RADIUS, SPACING } from '../src/constants/theme';
 import {
@@ -168,20 +175,51 @@ export default function Radio() {
   // unlock anyway so 2G users are never permanently blocked.
   const [unlockAttempts, setUnlockAttempts] = useState(0);
   // Build #37 — true while we are actively waiting (up to 3 s) for the
-  // rewarded ad SDK to fill on this tap. Used to show a loading state
-  // on the unlock card so the user doesn't think the tap was ignored.
+  // rewarded ad SDK to fill on this tap.
   const [unlockLoading, setUnlockLoading] = useState(false);
   const NETWORK_GRANT_AT = 5;
 
-  // Build #25 — synchronous sound tracking to fix "tap two channels →
-  // both play in background" bug.  React's setState is async, so the
-  // previous playback's `sound` was still null when the user tapped the
-  // next station, causing both createAsync() calls to land and produce
-  // overlapping audio.  We now hold the live Sound in a ref (synchronous
-  // read/write) and a sequence number that lets a stale createAsync()
-  // detect it has been superseded and unload itself before it can play.
-  const currentSoundRef = useRef<Audio.Sound | null>(null);
-  const playSeqRef = useRef(0);
+  // Build #39 — playback is now owned by the singleton in
+  // src/services/playback.ts. We subscribe to its state and mirror it
+  // into local React state so all existing JSX continues to render
+  // exactly as before. This solves three bugs at once:
+  //   • Stop / cancel during loading: singleton bumps its seq, the
+  //     in-flight createAsync resolves into a stale branch and disposes.
+  //   • Cross-mode bleed: a station started in UltraLite mode is
+  //     stopped the moment another station starts in Normal mode (and
+  //     vice versa) because both screens talk to the SAME singleton.
+  //   • Loading appearance: ExoPlayer reports the first frame to the
+  //     status callback which clears isLoading inside the singleton.
+  useEffect(() => {
+    const unsubscribe = playbackSubscribe((s: PlaybackState) => {
+      setPlaying(s.station as Station | null);
+      setPaused(s.isPaused);
+      setBuffering(s.isLoading);
+      // busyStation should reflect "this station is connecting" so the
+      // station row UI shows the hourglass / spinner.
+      if (s.isLoading && s.station) {
+        setBusyStation(s.station.stationuuid);
+        setBusyStationName(s.station.name.trim() || 'station');
+      } else {
+        setBusyStation(null);
+        setBusyStationName('');
+        setBusyElapsedS(0);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // Build #39 — connecting elapsed-second ticker. Runs while a station
+  // is loading; clears on success / fail / cancel. Visual only.
+  useEffect(() => {
+    if (!busyStation) return;
+    const startedAt = Date.now();
+    setBusyElapsedS(0);
+    const id = setInterval(() => {
+      setBusyElapsedS(Math.round((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, [busyStation]);
 
   const refreshFavorites = useCallback(async () => {
     setFavorites(await getRadioFavorites());
@@ -191,16 +229,17 @@ export default function Radio() {
     hydrate();
     preloadRewarded();
     refreshFavorites();
-    Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-      shouldDuckAndroid: true,
-    }).catch(() => {});
-    return () => {
-      if (sound) sound.unloadAsync().catch(() => {});
-    };
+    // Build #39 — playback singleton owns Audio.setAudioModeAsync now;
+    // it runs once on first playStation() call. No cleanup on unmount —
+    // the singleton intentionally OUTLIVES this screen so radio keeps
+    // playing if the user navigates back to home.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Local-state mirror — kept only to satisfy any lingering uses of the
+  // `sound` variable. The real source-of-truth lives in the singleton.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _ = sound;
 
   const favUuids = useMemo(
     () => new Set(favorites.map((f) => f.uuid)),
@@ -282,14 +321,32 @@ export default function Radio() {
     // Apply the search query client-side so the user sees results
     // INSTANTLY without waiting for the network catalogue to reply.
     const q = (query || '').trim().toLowerCase();
-    const hardcodedFiltered = q
-      ? hardcoded.filter(
-          (s) =>
-            s.name.toLowerCase().includes(q) ||
-            (s.country || '').toLowerCase().includes(q) ||
-            (s.language || '').toLowerCase().includes(q)
-        )
-      : hardcoded;
+    // Build #39 — filter bug fix: previously the hardcoded list was
+    // ALWAYS included regardless of country / language chips, so the
+    // user kept seeing "extra" stations even after picking Punjab or
+    // English. Now we apply country / language / query filters to the
+    // hardcoded list with the same predicate the network catalogue
+    // uses, so the chip selection actually narrows the list.
+    const wantCountry = (country || '').trim().toLowerCase();
+    const wantLang = (language || '').trim().toLowerCase();
+    const hardcodedFiltered = hardcoded.filter((s) => {
+      if (q) {
+        const matchesQ =
+          s.name.toLowerCase().includes(q) ||
+          (s.country || '').toLowerCase().includes(q) ||
+          (s.language || '').toLowerCase().includes(q);
+        if (!matchesQ) return false;
+      }
+      if (wantCountry) {
+        const c = (s.country || '').toLowerCase();
+        if (!c.includes(wantCountry)) return false;
+      }
+      if (wantLang) {
+        const l = (s.language || '').toLowerCase();
+        if (!l.includes(wantLang)) return false;
+      }
+      return true;
+    });
     setStations(hardcodedFiltered);
     setLoading(false);
 
@@ -368,182 +425,43 @@ export default function Radio() {
     load();
   }, [load]);
 
+  // Build #39 — thin wrappers around the playback singleton. All the
+  // sequence-guarding, sound-disposal and cancel-during-loading logic
+  // now lives in src/services/playback.ts so multiple radio screen
+  // mounts (Normal mode → UltraLite mode) share the SAME active sound
+  // and cannot bleed into each other.
   const stop = useCallback(async () => {
-    // Build #25 — bump sequence so any in-flight createAsync() knows it
-    // was superseded and won't write its sound back to the ref.
-    playSeqRef.current += 1;
-    const live = currentSoundRef.current;
-    currentSoundRef.current = null;
-    try {
-      await live?.stopAsync();
-      await live?.unloadAsync();
-    } catch {}
-    // Also clean any state-tracked sound (older one before ref pattern).
-    try {
-      await sound?.stopAsync();
-      await sound?.unloadAsync();
-    } catch {}
-    setSound(null);
-    setPlaying(null);
-    setPaused(false);
-    setBuffering(false);
-  }, [sound]);
-
-  // Build #25 — pause / resume the active stream without unloading it.
-  // Cheap on data: keeps the buffer warm so a one-tap resume restarts in
-  // milliseconds instead of paying another 35-45 s connect penalty.
-  const togglePause = useCallback(async () => {
-    const live = currentSoundRef.current;
-    if (!live) return;
-    try {
-      const status: any = await live.getStatusAsync();
-      if (!status?.isLoaded) return;
-      if (status.isPlaying) {
-        await live.pauseAsync();
-        setPaused(true);
-      } else {
-        await live.playAsync();
-        setPaused(false);
-      }
-    } catch {}
+    await playbackStop();
   }, []);
 
-  const startPlayback = useCallback(
-    async (s: Station) => {
-      // Build #25 — fix multi-tap-multi-stream bug.
-      //   1. Bump sequence FIRST so any older createAsync() in flight
-      //      knows it's stale and unloads itself when it resolves.
-      //   2. Synchronously read + null the ref so a fast-following tap
-      //      can't see the old sound.
-      //   3. Unload the previous sound (best-effort, fire-and-forget so
-      //      the new connect isn't delayed).
-      const mySeq = ++playSeqRef.current;
-      const prevSound = currentSoundRef.current;
-      currentSoundRef.current = null;
-      if (prevSound) {
-        prevSound.stopAsync().catch(() => {});
-        prevSound.unloadAsync().catch(() => {});
-      }
-      // Reset paused indicator (any prior pause state belongs to the
-      // old station).
-      setPaused(false);
+  const togglePause = useCallback(async () => {
+    await playbackTogglePause();
+  }, []);
 
-      setBusyStation(s.stationuuid);
-      setBusyStationName(s.name.trim() || 'station');
-      setBusyElapsedS(0);
-      setBuffering(true);
-      // Live "Connecting… 1s, 2s, 3s…" ticker so the user instantly sees
-      // progress on tap, even before expo-av reports buffering bytes.
-      // 64-kbps streams often take 4-12 s before the first audio frame
-      // reaches the decoder — without this, taps feel dead.
-      const startedAt = Date.now();
-      const elapsedTimer = setInterval(() => {
-        setBusyElapsedS(Math.round((Date.now() - startedAt) / 1000));
-      }, 500);
-      try {
-        // Build #37 tuning: 50 s → 20 s. User feedback was that 50 s
-        // wait felt broken — if a stream hasn't delivered any audio in
-        // 20 s on most networks, the broadcaster is likely offline or
-        // the link is too slow. Failing faster lets the user try a
-        // different station instead of staring at a frozen spinner.
-        const STREAM_TIMEOUT_MS = 20000;
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        const createPromise = Audio.Sound.createAsync(
-          { uri: s.url_resolved || s.url },
-          {
-            shouldPlay: true,
-            isLooping: false,
-            // Build #37: 2000 ms → 500 ms. Tighter polling so the
-            // "buffering" spinner clears the instant the first audio
-            // frame arrives instead of lagging up to 2 s behind.
-            progressUpdateIntervalMillis: 500,
-            // Build #37: MediaPlayer → ExoPlayer (default).
-            // ExoPlayer starts HLS / Icecast streams 3-5× faster than
-            // MediaPlayer because it begins decoding as soon as the
-            // first audio frame arrives, instead of waiting for a
-            // full prebuffer.  This is the single biggest win for the
-            // "channel takes forever to open" complaint.
-          } as any,
-          // Status callback — drives the on-screen "Buffering…" indicator
-          // and recovers from end-of-stream stalls.
-          (status: any) => {
-            // If we've been superseded by a later tap, stop tracking
-            // this stream entirely (the createAsync resolution below
-            // will unload it).
-            if (playSeqRef.current !== mySeq) return;
-            if (!status?.isLoaded) {
-              if (status?.error) {
-                console.warn('[radio] stream err', status.error);
-                setBuffering(false);
-              }
-              return;
-            }
-            // expo-av's `isBuffering` flag flips true while waiting for
-            // bytes. Mirror it into our own state so the UI can show a
-            // live spinner without re-rendering FlatList rows.
-            setBuffering(!!status.isBuffering && !status.isPlaying);
-          }
-        );
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(new Error('STREAM_TIMEOUT')),
-            STREAM_TIMEOUT_MS
-          );
-        });
-        let createdSound: Audio.Sound | null = null;
-        try {
-          const { sound: snd } = await Promise.race([
-            createPromise,
-            timeoutPromise,
-          ]);
-          createdSound = snd;
-        } finally {
-          if (timeoutId) clearTimeout(timeoutId);
-        }
-        if (!createdSound) throw new Error('NO_SOUND');
-        // GUARD: if the user tapped another station while this one was
-        // connecting, drop our sound on the floor (so it never plays
-        // silently in the background).  This is the single most
-        // important line of the multi-stream fix.
-        if (playSeqRef.current !== mySeq) {
-          createdSound.stopAsync().catch(() => {});
-          createdSound.unloadAsync().catch(() => {});
-          return;
-        }
-        currentSoundRef.current = createdSound;
-        setSound(createdSound);
-        setPlaying(s);
-        reportClick(s.stationuuid).catch(() => {});
-        trackClick();
-      } catch (e: any) {
-        console.warn('[radio] play err', e);
-        setBuffering(false);
-        // Best-effort: if a Sound got created but timed out, dispose it.
-        try {
-          await sound?.unloadAsync();
-        } catch {}
-        const isTimeout = e?.message === 'STREAM_TIMEOUT';
-        // Only show error if we're still the latest play attempt.
-        if (playSeqRef.current === mySeq) {
-          alert(
-            isTimeout
-              ? 'This station is too slow to start (≥ 20 s with no audio).\n' +
-                  'Try a different station or check your connection — the broadcaster may be offline.'
-              : 'Stream failed to start. The broadcaster may be offline or your link is too slow — try a lower-bitrate station (32-48 kbps).'
-          );
-        }
-      } finally {
-        clearInterval(elapsedTimer);
-        // Only clear "Connecting…" pill if WE are still the active attempt.
-        if (playSeqRef.current === mySeq) {
-          setBusyStation(null);
-          setBusyStationName('');
-          setBusyElapsedS(0);
-        }
-      }
-    },
-    [sound]
-  );
+  const startPlayback = useCallback(async (s: Station) => {
+    try {
+      await playbackPlay({
+        stationuuid: s.stationuuid,
+        name: s.name,
+        url: s.url,
+        url_resolved: s.url_resolved,
+      });
+      // Side-effects on a successful (non-cancelled) start.
+      reportClick(s.stationuuid).catch(() => {});
+      trackClick();
+    } catch (e: any) {
+      const isTimeout = e?.message === 'STREAM_TIMEOUT';
+      // Only surface the error if the user is still expecting THIS
+      // station to be playing — if they tapped stop or a different
+      // station while we were loading, swallow the error.
+      alert(
+        isTimeout
+          ? 'This station is too slow to start (≥ 15 s with no audio).\n' +
+              'Try a different station or check your connection — the broadcaster may be offline.'
+          : 'Stream failed to start. The broadcaster may be offline or your link is too slow — try a lower-bitrate station (32-48 kbps).'
+      );
+    }
+  }, []);
 
   // Build #25 — Prev / Next station navigation in the player box.
   // Uses the currently-displayed `stations` list so prev/next track the

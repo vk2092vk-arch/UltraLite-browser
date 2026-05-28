@@ -89,6 +89,41 @@ Android-native React Native (Expo) browser app focused on 2G / sub-64 kbps netwo
 - **Build metadata:** `version` 1.0.1 → 1.0.2, `versionCode` 1 → 2.
 - RECORD_AUDIO fix from Build #30 still in place.
 
+## Build #39 — Multi-issue critical fix bundle
+
+### Playback singleton (`src/services/playback.ts`)
+- All playback logic moved into a module-level singleton (seq counter + currentSound + listeners).
+- Fixes three bugs at once:
+  - **Loading takes forever / cannot be cancelled**: in-flight `Audio.Sound.createAsync` checks the seq AFTER resolving and disposes itself if user tapped stop / another station.
+  - **Cross button does nothing while loading**: `stopPlayback()` bumps seq synchronously; any orphan sound that arrives later is destroyed before it can play.
+  - **UltraLite + Normal both play together**: state survives unmount of radio.tsx, so navigating between Normal/UltraLite tabs operates on the SAME playback object. New station = previous one stopped first.
+- `radio.tsx` reduced to thin wrappers (`stop`, `togglePause`, `startPlayback`) + a `subscribe` effect that mirrors singleton state into local React state for the UI.
+
+### Filter fix (`radio.tsx`)
+- Hardcoded list is now filtered by `country` AND `language` chips too (previously only `query` was applied).
+- Picking "India + Punjabi" now actually narrows the list to Punjabi entries; picking "United Kingdom + English" hides Indian stations, etc.
+
+### Popular Hindi & Punjabi channels added (`hardcodedStations.ts`)
+- **Commercial Hindi FM**: Radio Mirchi 98.3, Big FM 92.7, Red FM 93.5, Fever FM 104, Radio City 91.1.
+- **AIR Hindi**: Vividh Bharati, FM Gold Delhi, FM Rainbow Delhi, News 24×7, Mumbai, Bhopal.
+- **Commercial Punjabi**: MY FM 94.3, Mirchi Punjabi, Red FM Punjabi, Big FM Punjabi.
+- **AIR Punjabi**: Rainbow Jalandhar, Amritsar.
+- **AIR Kashmir/Jammu**: Srinagar (Kashmiri), Jammu, Leh.
+- **AIR South**: Chennai (Tamil), Bengaluru (Kannada), Hyderabad (Telugu), Kolkata (Bengali).
+- Each channel has language tags so the new filter logic actually delivers the right set per chip.
+
+### Icon + Splash rebuilt with generous breathing room
+- `icon.png` (1024 white bg) — logo at 58% (was 70%): more white margin so the launcher mask never clips the L.
+- `adaptive-icon.png` (1024 transparent) — logo at 50% (well inside the 66% safe zone): no side cutting on any launcher shape (round / squircle / square).
+- `splash-icon.png` — fully transparent background (0 alpha everywhere outside content) so the line/box artifact on splash is gone.
+- `ultralite-logo.png` — 85% logo in transparent square for the home brand row.
+- `favicon.png` — 70% logo, white bg.
+
+### Build metadata
+- `version` 1.0.2 (unchanged — user requested same name)
+- `versionCode` 2 → **3** (mandatory: Play Console rejects duplicate versionCodes; closed testing already consumed v2 attempt)
+- `version.json`: `latestVersionCode` 2 → 3 (so already-installed v1.0.2 testers see the update modal pointing to the production build)
+
 ## Build #38 — Forced update check
 - New file `/app/version.json` at repo root with `{latestVersionCode, latestVersionName, playStoreUrl, releaseNotes}`. Bump this AFTER publishing each new build to Play Store so existing installs see the popup.
 - New component `frontend/src/components/UpdateModal.tsx`:
