@@ -48,7 +48,7 @@ export type PlaybackState = {
 
 type Listener = (s: PlaybackState) => void;
 
-const STREAM_TIMEOUT_MS = 15000;
+const STREAM_TIMEOUT_MS = 20000;
 const POLL_INTERVAL_MS = 250;
 
 let currentSound: Audio.Sound | null = null;

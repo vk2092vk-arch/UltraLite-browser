@@ -89,6 +89,15 @@ Android-native React Native (Expo) browser app focused on 2G / sub-64 kbps netwo
 - **Build metadata:** `version` 1.0.1 → 1.0.2, `versionCode` 1 → 2.
 - RECORD_AUDIO fix from Build #30 still in place.
 
+## Build #40 — Radio stations COMPLETELY rebuilt with verified-working URLs
+- **Root cause of "Stream failed to start" popup**: 30+ entries in the previous hardcoded list were placeholder URLs guessed from broadcaster names (e.g. `streamtheworld.com/api/livestream-redirect/BIG_FMAAC.aac`). Every single guessed URL returned HTTP 404 on the network.
+- **Fix**: rewrote `hardcodedStations.ts` from scratch with ONLY personally-verified URLs (GET 200/206 + audio Content-Type or valid #EXTM3U HLS playlist + > 100 bytes).
+- **Source**: radio-browser.info catalogue, popular entries only (clickcount > 5), HTTPS-only.
+- **Catalog**: 28 Normal (Mirchi Hindi 128 kbps, Red FM 320 kbps, Fever 104, AIR Gold Delhi/Mumbai, AIR Rainbow Delhi/Jalandhar Punjabi/Kolkata Bengali, AIR Vividh Mumbai/Bengaluru/Hyderabad, AIR Indraprastha, AIR Punjabi, AIR Chennai Tamil, BritAsia Punjabi, Maharani, Risham, SomaFM ×2, Radio Paradise, BBC, Classic FM) + 17 UltraLite (RED FM Toronto/Vancouver Punjabi 32k, SomaFM ×5 at 32k, Radio Paradise 48k, 7 AIR HLS Auto, Lata + Kishore at 48k).
+- **Removed (broken)**: Big FM 92.7 guessed URL, MY FM 94.3 (no public stream exists), Vatican Radio, Deutsche Welle, ~25 made-up AIR pbaudio IDs that returned 404.
+- **Timeout 15 s → 20 s** in `playback.ts`.
+- **Both modes** route through the same playback singleton — no dual-playback bleed.
+
 ## Build #39 — Multi-issue critical fix bundle
 
 ### Playback singleton (`src/services/playback.ts`)
