@@ -86,5 +86,15 @@ Android-native React Native (Expo) browser app focused on 2G / sub-64 kbps netwo
   - Unlock card shows ActivityIndicator + "Loading ad… please wait" during 3-s window.
 - **Home brand alignment fix:** logo regenerated with tight crop; `brandHeroLogo` 88 → 64 px, text 36 → 32 with `lineHeight: 38`, text row `alignItems: 'baseline'` → `'center'`.
 - **App launcher icon fix:** `icon.png`, `adaptive-icon.png`, `splash-icon.png`, `favicon.png` all regenerated from fresh source. Adaptive icon foreground confined to 66% Android safe zone so no uneven gap.
-- **Build metadata:** `version` 1.0.1 → 1.0.30, `versionCode` 1 → 30.
+- **Build metadata:** `version` 1.0.1 → 1.0.2, `versionCode` 1 → 2.
 - RECORD_AUDIO fix from Build #30 still in place.
+
+## Build #38 — Forced update check
+- New file `/app/version.json` at repo root with `{latestVersionCode, latestVersionName, playStoreUrl, releaseNotes}`. Bump this AFTER publishing each new build to Play Store so existing installs see the popup.
+- New component `frontend/src/components/UpdateModal.tsx`:
+  - On every app launch fetches `https://raw.githubusercontent.com/vk2092vk-arch/UltraLite-browser/main/version.json` (cache-busted with a per-minute query param + `cache: 'no-store'`).
+  - Compares `latestVersionCode` against the installed `Constants.expoConfig.android.versionCode`.
+  - If remote > installed → modal with "Update Now" (opens Play Store URL via `Linking.openURL`) and "Skip for now" (dismisses for this session only — popup returns next launch until user installs the new build).
+  - Fails silently on network errors so users are never blocked.
+- Mounted as the last child of `SafeAreaProvider` in `app/_layout.tsx` so it sits above all routes.
+- Uses brand orange accent and the existing theme tokens; testIDs: `update-modal`, `update-now-btn`, `update-skip-btn`.

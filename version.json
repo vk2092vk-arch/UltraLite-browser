@@ -1,0 +1,7 @@
+{
+  "_comment": "UltraLite Browser version manifest. Bump the values here AFTER you publish a new build to Play Store. The installed app fetches this file from raw.githubusercontent.com on every launch and shows the update modal when versionCode below is HIGHER than the locally installed versionCode.",
+  "latestVersionCode": 2,
+  "latestVersionName": "1.0.2",
+  "playStoreUrl": "https://play.google.com/store/apps/details?id=com.gemmiapps.ultralite",
+  "releaseNotes": "Faster radio streaming · Stop button while connecting · App icon polish · 5-fail unlock grant"
+}

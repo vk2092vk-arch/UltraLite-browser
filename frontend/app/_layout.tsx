@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, FONT, RADIUS, SPACING } from '../src/constants/theme';
+import UpdateModal from '../src/components/UpdateModal';
 
 const DISCLAIMER_KEY = '@ul/disclaimer_v1';
 
@@ -90,6 +91,12 @@ export default function RootLayout() {
             </View>
           </View>
         </Modal>
+        {/* Build #38 — Update check: runs on every launch and shows a
+            skippable "Update Available" modal whenever the GitHub
+            version manifest reports a newer versionCode than the one
+            installed. Skip dismisses for this session only; the modal
+            returns next launch. Fails silently when offline. */}
+        <UpdateModal />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
