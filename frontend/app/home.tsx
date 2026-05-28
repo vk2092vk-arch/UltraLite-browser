@@ -1787,10 +1787,12 @@ const styles = StyleSheet.create({
   // pushing actual page content too far down the screen.  Logo on the
   // left, text on the right keeps it compact and matches the topbar
   // brand layout for visual consistency between modes.
-  // Build #26 — user requested logo doubled for clearer brand presence
-  // on the home screen.  44 px → 88 px logo, text scaled proportionally
-  // (24 → 36) so it stays balanced beside the bigger logo.  Padding kept
-  // tight so the hero doesn't push content down again.
+  // Build #37 — tightened logo + text alignment.
+  // The new logo image is tightly cropped (content fills ~85% of square)
+  // so we can shrink the displayed size and center it against the text
+  // height instead of dominating the hero. The whole row uses
+  // `alignItems: 'center'` so logo and text visual centers line up on
+  // the same horizontal axis.
   brandHero: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1803,35 +1805,38 @@ const styles = StyleSheet.create({
     borderColor: COLORS.brandOrange,
     borderRadius: RADIUS.sm,
     backgroundColor: '#FFFFFF',
-    gap: 14,
+    gap: 12,
   },
   brandHeroLogo: {
-    width: 88,
-    height: 88,
+    width: 64,
+    height: 64,
   },
   brandHeroTextRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: 4,
   },
   brandOrangeHero: {
     color: COLORS.brandOrange,
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: FONT.weight.black,
     letterSpacing: 0.4,
+    lineHeight: 38,
   },
   brandBlueHero: {
     color: COLORS.brandBlue,
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: FONT.weight.black,
     letterSpacing: 0.4,
+    lineHeight: 38,
   },
   brandSubHero: {
     color: COLORS.textMuted,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: FONT.weight.semibold,
     marginLeft: 4,
-    marginBottom: 2,
+    lineHeight: 38,
+    alignSelf: 'center',
   },
   tabsBadge: {
     width: 22,

@@ -164,10 +164,14 @@ export default function Radio() {
   const [buffering, setBuffering] = useState(false);
   const [favorites, setFavorites] = useState<RadioFav[]>([]);
   // Tracks how many times the user has tapped "Watch Ad" while the SDK
-  // failed to deliver — when this hits 10, we grant the unlock anyway so
-  // 2G users are never permanently blocked.
+  // failed to deliver — when this hits NETWORK_GRANT_AT, we grant the
+  // unlock anyway so 2G users are never permanently blocked.
   const [unlockAttempts, setUnlockAttempts] = useState(0);
-  const NETWORK_GRANT_AT = 10;
+  // Build #37 — true while we are actively waiting (up to 3 s) for the
+  // rewarded ad SDK to fill on this tap. Used to show a loading state
+  // on the unlock card so the user doesn't think the tap was ignored.
+  const [unlockLoading, setUnlockLoading] = useState(false);
+  const NETWORK_GRANT_AT = 5;
 
   // Build #25 — synchronous sound tracking to fix "tap two channels →
   // both play in background" bug.  React's setState is async, so the
@@ -564,33 +568,58 @@ export default function Radio() {
 
   // Global Unlock handler — user taps the big card. Watches a rewarded ad,
   // counts towards 2 ads, after the 2nd ad → 30-min unlock for ALL stations.
+  //
+  // Build #37 — user feedback: previous code only checked isRewardedReady()
+  // SYNCHRONOUSLY on tap. If the SDK hadn't filled yet, the tap was
+  // wasted — no real "load attempt" happened. Now on every tap with no
+  // ad ready we call preloadRewarded() and POLL for up to 3 seconds,
+  // giving the SDK a real chance to deliver a fill. If a fill arrives
+  // within 3 s we show it (success path). Only after the full 3 s with
+  // no fill do we count the tap as a failed attempt. After 5 failed
+  // attempts (was 10) the user gets the 30-min Network Grant.
   const handleUnlockTap = useCallback(async () => {
     if (isRadioUnlocked()) return; // already unlocked, button shouldn't show
 
-    // No ad ready yet — count the failed attempt. After NETWORK_GRANT_AT
-    // (10) consecutive failures, fall back to a free 30-min Network Grant
-    // so 2G users are never permanently locked out.
+    // 1) If no ad is ready yet, give the SDK a 3-second window to load.
     if (!isRewardedReady()) {
       preloadRewarded();
-      const next = unlockAttempts + 1;
-      setUnlockAttempts(next);
-      if (next >= NETWORK_GRANT_AT) {
-        await grantRadioFallback();
-        setUnlockAttempts(0);
+      setUnlockLoading(true);
+      const AD_LOAD_WAIT_MS = 3000;
+      const POLL_MS = 200;
+      const startedAt = Date.now();
+      let ready = false;
+      while (Date.now() - startedAt < AD_LOAD_WAIT_MS) {
+        if (isRewardedReady()) {
+          ready = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, POLL_MS));
+      }
+      setUnlockLoading(false);
+
+      if (!ready) {
+        // Real failed attempt — SDK didn't deliver an ad in 3 s.
+        const next = unlockAttempts + 1;
+        setUnlockAttempts(next);
+        if (next >= NETWORK_GRANT_AT) {
+          await grantRadioFallback();
+          setUnlockAttempts(0);
+          alert(
+            '📡 Network Grant — Radio unlocked for 30 minutes.\n' +
+              'Ad service was unreachable on your slow link, so we unlocked it for free.'
+          );
+          return;
+        }
         alert(
-          '📡 Network Grant — Radio unlocked for 30 minutes.\n' +
-            'Ad service was unreachable on your slow link, so we unlocked it for free.'
+          `Ad could not load (tried for 3 s). Tap again to retry.\n` +
+            `(${next}/${NETWORK_GRANT_AT} — auto-grant on slow network at ${NETWORK_GRANT_AT} tries)`
         );
         return;
       }
-      alert(
-        `Ad still loading — please wait a moment and tap again.\n` +
-          `(${next}/${NETWORK_GRANT_AT} — auto-grant on slow network at ${NETWORK_GRANT_AT} tries)`
-      );
-      return;
+      // Ad became ready during the 3-s window — fall through to show it.
     }
 
-    // Ad is ready — show it and wait for the reward callback.
+    // 2) Ad is ready — show it and wait for the reward callback.
     let earned = false;
     const ok = await showRewarded(async () => {
       earned = true;
@@ -786,23 +815,32 @@ export default function Radio() {
       ) : (
         <Pressable
           onPress={handleUnlockTap}
+          disabled={unlockLoading}
           style={styles.unlockCard}
           testID="radio-unlock-btn"
           android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
         >
           <View style={styles.unlockIcon}>
-            <Ionicons name="gift" size={22} color="#fff" />
+            {unlockLoading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons name="gift" size={22} color="#fff" />
+            )}
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.unlockTitle}>
-              Unlock Radio · 30 Minutes Ad-Free
+              {unlockLoading
+                ? 'Loading ad… please wait'
+                : 'Unlock Radio · 30 Minutes Ad-Free'}
             </Text>
             <Text style={styles.unlockSub}>
-              Watch {adsToGo} short ad{adsToGo === 1 ? '' : 's'} to unlock
-              every station.
-              {unlockAttempts > 0
-                ? `  (${unlockAttempts}/${NETWORK_GRANT_AT} retries — auto-grant on slow link)`
-                : ''}
+              {unlockLoading
+                ? 'Trying to load a rewarded ad (up to 3 s)…'
+                : `Watch ${adsToGo} short ad${adsToGo === 1 ? '' : 's'} to unlock every station.${
+                    unlockAttempts > 0
+                      ? `  (${unlockAttempts}/${NETWORK_GRANT_AT} retries — auto-grant on slow link)`
+                      : ''
+                  }`}
             </Text>
             <View style={styles.progressBar}>
               <View

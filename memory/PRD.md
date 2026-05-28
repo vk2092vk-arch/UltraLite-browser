@@ -68,3 +68,23 @@ Android-native React Native (Expo) browser app focused on 2G / sub-64 kbps netwo
 - No code change needed in `radio.tsx` — audio playback via `expo-av` works fine without RECORD_AUDIO permission (only needed for recording).
 - versionCode unchanged (previous AAB upload failed, so v1 is still available). User can bump if needed before next upload.
 - Next AAB built via `.github/workflows/build-apk.yml` on push to main will be Play Store upload-ready.
+
+
+## Build #37 — UX polish + ad logic tune + icons rebuild
+- **Radio buffering reduced:**
+  - `androidImplementation: 'MediaPlayer'` → ExoPlayer (default). ExoPlayer starts HLS/Icecast streams 3–5× faster.
+  - `STREAM_TIMEOUT_MS` 50 s → 20 s. Slow stations fail fast so user can move on.
+  - `progressUpdateIntervalMillis` 2000 ms → 500 ms. Buffering spinner clears as soon as first audio frame arrives.
+- **Stop / cancel anywhere:**
+  - "Connecting…" pill is now a Pressable with a circular ✕ button. Tap pill → cancels in-flight connection.
+  - Station row tap during busy state also calls `stop()` (was only working when station was already playing).
+- **Ad unlock retry — 3-second active wait + 5-fail grant:**
+  - On tap with no ad ready, `preloadRewarded()` is called and we POLL `isRewardedReady()` every 200 ms for up to 3 s.
+  - If ad fills during 3 s window → show ad (success path unchanged).
+  - If no ad after 3 s → count as failed attempt.
+  - `NETWORK_GRANT_AT` 10 → 5. Auto 30-min unlock after 5 unsuccessful 3-s attempts.
+  - Unlock card shows ActivityIndicator + "Loading ad… please wait" during 3-s window.
+- **Home brand alignment fix:** logo regenerated with tight crop; `brandHeroLogo` 88 → 64 px, text 36 → 32 with `lineHeight: 38`, text row `alignItems: 'baseline'` → `'center'`.
+- **App launcher icon fix:** `icon.png`, `adaptive-icon.png`, `splash-icon.png`, `favicon.png` all regenerated from fresh source. Adaptive icon foreground confined to 66% Android safe zone so no uneven gap.
+- **Build metadata:** `version` 1.0.1 → 1.0.30, `versionCode` 1 → 30.
+- RECORD_AUDIO fix from Build #30 still in place.
