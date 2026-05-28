@@ -437,25 +437,28 @@ export default function Radio() {
         setBusyElapsedS(Math.round((Date.now() - startedAt) / 1000));
       }, 500);
       try {
-        // Build #24 tuning: bumped 30 s → 50 s.  Real sub-60 kbps users
-        // were complaining "channel shows buffering but never plays" —
-        // the AIR / Prasar Bharati 95-126 kbps streams sometimes take
-        // 35-45 s to deliver the first audio frame on 2G.  Killing at
-        // 30 s was aborting valid sessions a moment before they would
-        // have started playing.
-        const STREAM_TIMEOUT_MS = 50000;
+        // Build #37 tuning: 50 s → 20 s. User feedback was that 50 s
+        // wait felt broken — if a stream hasn't delivered any audio in
+        // 20 s on most networks, the broadcaster is likely offline or
+        // the link is too slow. Failing faster lets the user try a
+        // different station instead of staring at a frozen spinner.
+        const STREAM_TIMEOUT_MS = 20000;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         const createPromise = Audio.Sound.createAsync(
           { uri: s.url_resolved || s.url },
           {
             shouldPlay: true,
             isLooping: false,
-            // Lower polling overhead on weak networks; covers buffering
-            // without busy-looping the JS thread on 2G.
-            progressUpdateIntervalMillis: 2000,
-            // MediaPlayer is lighter than ExoPlayer for plain HTTP audio
-            // streams and tolerates intermittent 64-kbps links better.
-            androidImplementation: 'MediaPlayer',
+            // Build #37: 2000 ms → 500 ms. Tighter polling so the
+            // "buffering" spinner clears the instant the first audio
+            // frame arrives instead of lagging up to 2 s behind.
+            progressUpdateIntervalMillis: 500,
+            // Build #37: MediaPlayer → ExoPlayer (default).
+            // ExoPlayer starts HLS / Icecast streams 3-5× faster than
+            // MediaPlayer because it begins decoding as soon as the
+            // first audio frame arrives, instead of waiting for a
+            // full prebuffer.  This is the single biggest win for the
+            // "channel takes forever to open" complaint.
           } as any,
           // Status callback — drives the on-screen "Buffering…" indicator
           // and recovers from end-of-stream stalls.
@@ -520,7 +523,7 @@ export default function Radio() {
         if (playSeqRef.current === mySeq) {
           alert(
             isTimeout
-              ? 'This station is too slow to start (≥ 50 s with no audio).\n' +
+              ? 'This station is too slow to start (≥ 20 s with no audio).\n' +
                   'Try a different station or check your connection — the broadcaster may be offline.'
               : 'Stream failed to start. The broadcaster may be offline or your link is too slow — try a lower-bitrate station (32-48 kbps).'
           );
@@ -639,7 +642,7 @@ export default function Radio() {
       return (
         <Pressable
           testID={`station-${item.stationuuid}`}
-          onPress={() => (isPlaying ? stop() : playStation(item))}
+          onPress={() => (isPlaying || isBusy ? stop() : playStation(item))}
           style={[styles.stationCard, isPlaying && styles.stationPlaying]}
         >
           <View
@@ -871,14 +874,31 @@ export default function Radio() {
       {/* Sticky "Connecting to <station>… Xs" pill — visible the moment a
           station is tapped, regardless of whether expo-av has produced
           any buffering bytes yet.  Kills the "tapped but nothing
-          happens" perception on sub-64 kbps networks. */}
+          happens" perception on sub-64 kbps networks.
+
+          Build #37 — pill is now TAPPABLE (Stop ✕) so the user can
+          abort a slow-to-start connection without waiting for the 20 s
+          timeout. Critical for the "channel won't open, let me try
+          another" flow on weak networks. */}
       {busyStation && !playing && (
-        <View style={styles.connectingPill} testID="radio-connecting-pill">
+        <Pressable
+          style={styles.connectingPill}
+          testID="radio-connecting-pill"
+          onPress={stop}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel connection"
+        >
           <ActivityIndicator color="#fff" size="small" />
           <Text style={styles.connectingText} numberOfLines={1}>
             Connecting to {busyStationName}… {busyElapsedS}s
           </Text>
-        </View>
+          <View
+            style={styles.connectingStopBtn}
+            testID="radio-connecting-stop"
+          >
+            <Ionicons name="close" size={16} color="#fff" />
+          </View>
+        </Pressable>
       )}
 
       {/* Build #25 — full music-player box.
@@ -1320,6 +1340,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: FONT.size.sm,
     fontWeight: FONT.weight.semibold,
+  },
+  connectingStopBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   npDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#4ade80' },
   npText: { color: '#fff', flex: 1, fontWeight: FONT.weight.semibold },
