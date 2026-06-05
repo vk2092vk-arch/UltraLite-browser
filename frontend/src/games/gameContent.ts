@@ -424,8 +424,54 @@ if(av){av.className='avatar '+p.color;}
 });
 }
 
+// Sound & Vibration Functions
+var audioCtx=null;
+function getAudioCtx(){
+if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+return audioCtx;
+}
+function playSound(freq,duration,type){
+try{
+var ctx=getAudioCtx();
+var osc=ctx.createOscillator();
+var gain=ctx.createGain();
+osc.connect(gain);
+gain.connect(ctx.destination);
+osc.frequency.value=freq;
+osc.type=type||'sine';
+gain.gain.setValueAtTime(0.3,ctx.currentTime);
+gain.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+duration);
+osc.start(ctx.currentTime);
+osc.stop(ctx.currentTime+duration);
+}catch(e){}
+}
+function playDiceSound(){
+playSound(200,0.05,'square');
+setTimeout(function(){playSound(250,0.05,'square');},50);
+setTimeout(function(){playSound(300,0.05,'square');},100);
+setTimeout(function(){playSound(400,0.1,'sine');},150);
+}
+function playMoveSound(){
+playSound(600,0.08,'sine');
+}
+function playCaptureSound(){
+playSound(150,0.15,'sawtooth');
+setTimeout(function(){playSound(100,0.2,'sawtooth');},100);
+}
+function playWinSound(){
+[0,100,200,300,400].forEach(function(d,i){
+setTimeout(function(){playSound(400+i*100,0.15,'sine');},d);
+});
+}
+function vibrate(pattern){
+try{
+if(navigator.vibrate)navigator.vibrate(pattern);
+}catch(e){}
+}
+
 function rollDice(){
 if(game.phase!=='roll')return;
+playDiceSound();
 game.dice=Math.floor(Math.random()*6)+1;
 drawDice(game.dice);
 game.sixCount=game.dice===6?game.sixCount+1:0;
@@ -456,13 +502,25 @@ if(!token.canMove)return;
 player.tokens.forEach(function(t){t.canMove=false;});
 game.phase='moving';
 
+var oldPos=token.pos;
+var steps=game.dice;
+var captured=false;
+
 if(token.pos===-1){
 token.pos=0;
+playMoveSound();
 }else{
-token.pos+=game.dice;
-}
-
-// Check capture
+// Animate step by step
+var currentStep=0;
+function animateStep(){
+if(currentStep<steps){
+token.pos=oldPos+currentStep+1;
+playMoveSound();
+drawTokens();
+currentStep++;
+setTimeout(animateStep,150);
+}else{
+// Check capture after animation
 if(token.pos>=0&&token.pos<52){
 var trackIdx=getPath(player.color)[token.pos];
 if(SAFE.indexOf(trackIdx)===-1){
@@ -473,6 +531,36 @@ if(ot.pos>=0&&ot.pos<52){
 var otIdx=getPath(op.color)[ot.pos];
 if(otIdx===trackIdx){
 ot.pos=-1;
+captured=true;
+playCaptureSound();
+vibrate([100,50,100,50,200]);
+}
+}
+});
+});
+}
+}
+finishMove();
+}
+}
+animateStep();
+return;
+}
+
+// For tokens coming out of base
+if(token.pos>=0&&token.pos<52){
+var trackIdx=getPath(player.color)[token.pos];
+if(SAFE.indexOf(trackIdx)===-1){
+game.players.forEach(function(op){
+if(op===player)return;
+op.tokens.forEach(function(ot){
+if(ot.pos>=0&&ot.pos<52){
+var otIdx=getPath(op.color)[ot.pos];
+if(otIdx===trackIdx){
+ot.pos=-1;
+captured=true;
+playCaptureSound();
+vibrate([100,50,100,50,200]);
 }
 }
 });
@@ -480,11 +568,16 @@ ot.pos=-1;
 }
 }
 
+finishMove();
+
+function finishMove(){
 if(token.pos>=57){
 player.score++;
+playWinSound();
 if(player.score>=4){
 game.phase='won';
 turnText.textContent=player.name+' WINS! 🎉';
+vibrate([200,100,200,100,400]);
 drawTokens();
 updateUI();
 return;
@@ -498,6 +591,7 @@ updateUI();
 if(player.bot)setTimeout(rollDice,500);
 }else{
 nextTurn();
+}
 }
 }
 
