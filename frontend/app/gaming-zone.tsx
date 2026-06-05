@@ -9,14 +9,13 @@ import {
   Pressable,
   Image,
   StatusBar,
-  Platform,
-  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { WebView } from 'react-native-webview';
-import { Asset } from 'expo-asset';
+import { LUDO_GAME_HTML, SUPERBOY_GAME_HTML } from '../src/games/gameContent';
 
 // ── Design tokens ──
 const COLORS = {
@@ -57,7 +56,7 @@ interface Game {
   name: string;
   description: string;
   image: string;
-  assetPath: string;
+  gameHtml: string;
   icon: keyof typeof Ionicons.glyphMap;
 }
 
@@ -67,7 +66,7 @@ const GAMES: Game[] = [
     name: 'Ludo Classic',
     description: 'Roll the dice and race your tokens!',
     image: 'https://images.unsplash.com/photo-1596687909057-dfac2b25b891?w=600&h=400&fit=crop',
-    assetPath: 'ludo',
+    gameHtml: LUDO_GAME_HTML,
     icon: 'dice-outline',
   },
   {
@@ -75,7 +74,7 @@ const GAMES: Game[] = [
     name: 'Super Boy',
     description: 'Jump, run and collect coins!',
     image: 'https://images.pexels.com/photos/13930769/pexels-photo-13930769.jpeg?w=600&h=400&fit=crop',
-    assetPath: 'superboy',
+    gameHtml: SUPERBOY_GAME_HTML,
     icon: 'game-controller-outline',
   },
 ];
@@ -85,12 +84,11 @@ export default function GamingZone() {
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [gameLoading, setGameLoading] = useState(false);
 
-  const handlePlayGame = async (game: Game) => {
+  const handlePlayGame = (game: Game) => {
     setGameLoading(true);
     setSelectedGame(game);
-    // Games will load from local assets
-    // For now, showing placeholder until actual game files are added
-    setTimeout(() => setGameLoading(false), 500);
+    // Small delay for smooth transition
+    setTimeout(() => setGameLoading(false), 300);
   };
 
   const handleBackFromGame = () => {
@@ -112,31 +110,26 @@ export default function GamingZone() {
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Game WebView - Will load local HTML when assets are added */}
+        {/* Game WebView - Loads inline HTML games */}
         <View style={styles.gameContainer}>
           {gameLoading ? (
             <View style={styles.loadingContainer}>
-              <Ionicons name="game-controller" size={48} color={COLORS.brandOrange} />
+              <ActivityIndicator size="large" color={COLORS.brandOrange} />
               <Text style={styles.loadingText}>Loading Game...</Text>
             </View>
           ) : (
-            <View style={styles.placeholderContainer}>
-              <Ionicons name={selectedGame.icon} size={80} color={COLORS.brandOrange} />
-              <Text style={styles.placeholderTitle}>{selectedGame.name}</Text>
-              <Text style={styles.placeholderText}>
-                🎮 Game Coming Soon!
-              </Text>
-              <Text style={styles.placeholderSubtext}>
-                Add game files to:{'\n'}
-                assets/{selectedGame.assetPath}/index.html
-              </Text>
-              <Pressable
-                onPress={handleBackFromGame}
-                style={styles.backToGamesBtn}
-              >
-                <Text style={styles.backToGamesText}>← Back to Games</Text>
-              </Pressable>
-            </View>
+            <WebView
+              source={{ html: selectedGame.gameHtml }}
+              style={styles.webview}
+              originWhitelist={['*']}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              scalesPageToFit={false}
+              bounces={false}
+              scrollEnabled={false}
+              showsHorizontalScrollIndicator={false}
+              showsVerticalScrollIndicator={false}
+            />
           )}
         </View>
       </SafeAreaView>
@@ -359,43 +352,8 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: FONT.size.md,
   },
-  placeholderContainer: {
+  webview: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: SPACING.xl,
-    gap: SPACING.md,
-  },
-  placeholderTitle: {
-    fontSize: FONT.size.xl,
-    fontWeight: FONT.weight.bold,
-    color: COLORS.text,
-    marginTop: SPACING.md,
-  },
-  placeholderText: {
-    fontSize: FONT.size.lg,
-    color: COLORS.accent,
-    textAlign: 'center',
-  },
-  placeholderSubtext: {
-    fontSize: FONT.size.sm,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    marginTop: SPACING.sm,
-    lineHeight: 22,
-  },
-  backToGamesBtn: {
-    marginTop: SPACING.xl,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.brandOrange,
-  },
-  backToGamesText: {
-    color: COLORS.brandOrange,
-    fontSize: FONT.size.md,
-    fontWeight: FONT.weight.semibold,
+    backgroundColor: 'transparent',
   },
 });
