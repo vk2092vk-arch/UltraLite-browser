@@ -95,44 +95,42 @@ export default function GamingZone() {
     setSelectedGame(null);
   };
 
-  // If a game is selected, show the WebView
+  // If a game is selected, show FULL SCREEN WebView
   if (selectedGame) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
+      <View style={styles.fullScreenContainer}>
+        <StatusBar hidden={true} />
         
-        {/* Game Header */}
-        <View style={styles.gameHeader}>
-          <Pressable onPress={handleBackFromGame} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={COLORS.text} />
-          </Pressable>
-          <Text style={styles.gameHeaderTitle}>{selectedGame.name}</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        {/* Full Screen Game WebView */}
+        {gameLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={COLORS.brandOrange} />
+            <Text style={styles.loadingText}>Loading Game...</Text>
+          </View>
+        ) : (
+          <WebView
+            source={{ html: selectedGame.gameHtml }}
+            style={styles.fullScreenWebview}
+            originWhitelist={['*']}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            scalesPageToFit={false}
+            bounces={false}
+            scrollEnabled={false}
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
 
-        {/* Game WebView - Loads inline HTML games */}
-        <View style={styles.gameContainer}>
-          {gameLoading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={COLORS.brandOrange} />
-              <Text style={styles.loadingText}>Loading Game...</Text>
-            </View>
-          ) : (
-            <WebView
-              source={{ html: selectedGame.gameHtml }}
-              style={styles.webview}
-              originWhitelist={['*']}
-              javaScriptEnabled={true}
-              domStorageEnabled={true}
-              scalesPageToFit={false}
-              bounces={false}
-              scrollEnabled={false}
-              showsHorizontalScrollIndicator={false}
-              showsVerticalScrollIndicator={false}
-            />
-          )}
-        </View>
-      </SafeAreaView>
+        {/* Floating Exit Button - Always visible on top */}
+        <Pressable 
+          onPress={handleBackFromGame} 
+          style={styles.floatingExitButton}
+        >
+          <Ionicons name="close" size={20} color={COLORS.text} />
+          <Text style={styles.exitButtonText}>EXIT</Text>
+        </Pressable>
+      </View>
     );
   }
 
@@ -324,36 +322,45 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONT.size.sm,
   },
-  // Game Playing Screen Styles
-  gameHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    backgroundColor: COLORS.cardBg,
-  },
-  gameHeaderTitle: {
-    fontSize: FONT.size.lg,
-    fontWeight: FONT.weight.bold,
-    color: COLORS.text,
-  },
-  gameContainer: {
+  // Full Screen Game Styles
+  fullScreenContainer: {
     flex: 1,
-    backgroundColor: COLORS.bg,
+    backgroundColor: '#000',
+  },
+  fullScreenWebview: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: SPACING.md,
+    backgroundColor: COLORS.bg,
   },
   loadingText: {
     color: COLORS.text,
     fontSize: FONT.size.md,
   },
-  webview: {
-    flex: 1,
-    backgroundColor: 'transparent',
+  floatingExitButton: {
+    position: 'absolute',
+    top: 40,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    zIndex: 999,
+  },
+  exitButtonText: {
+    color: COLORS.text,
+    fontSize: FONT.size.xs,
+    fontWeight: FONT.weight.bold,
+    letterSpacing: 1,
   },
 });

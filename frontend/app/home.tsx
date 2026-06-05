@@ -1357,42 +1357,7 @@ export default function Home() {
               </View>
             </View>
 
-            {/* ── 3. Offline Games Banner (50-50 Split View) ── */}
-            <Pressable
-              onPress={() => {
-                router.push('/gaming-zone');
-                trackClick();
-              }}
-              style={styles.offlineGamesBanner}
-              testID="home-offline-games"
-            >
-              <Text style={styles.offlineGamesTitle}>🎮 Offline Games</Text>
-              <View style={styles.offlineGamesRow}>
-                <View style={styles.offlineGameCard}>
-                  <Image
-                    source={{ uri: 'https://images.unsplash.com/photo-1596687909057-dfac2b25b891?w=400&h=300&fit=crop' }}
-                    style={styles.offlineGameImage}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.offlineGameOverlay}>
-                    <Text style={styles.offlineGameName}>Ludo</Text>
-                  </View>
-                </View>
-                <View style={styles.offlineGameCard}>
-                  <Image
-                    source={{ uri: 'https://images.pexels.com/photos/13930769/pexels-photo-13930769.jpeg?w=400&h=300&fit=crop' }}
-                    style={styles.offlineGameImage}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.offlineGameOverlay}>
-                    <Text style={styles.offlineGameName}>Super Boy</Text>
-                  </View>
-                </View>
-              </View>
-              <Text style={styles.offlineGamesHint}>Tap to play • No internet needed</Text>
-            </Pressable>
-
-            {/* ── 4. Radio card (MOVED DOWN - with Watch Ad + Share App unlock) ── */}
+            {/* ── 3. Radio card (MOVED UP - with Watch Ad + Share App unlock) ── */}
             <View
               style={[styles.radioCard, { borderColor: cardBorder }]}
               testID="home-radio-card"
@@ -1405,9 +1370,15 @@ export default function Home() {
                 style={styles.radioLeft}
                 testID="home-radio-open"
               >
-                <Ionicons name="radio" size={28} color={COLORS.brandOrange} />
-                <Text style={styles.radioTitle}>Radio</Text>
-                <Text style={styles.radioSub}>Tap to browse stations</Text>
+                <View style={styles.radioIconRow}>
+                  <View style={styles.radioIconBg}>
+                    <Ionicons name="radio" size={24} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.radioTextWrap}>
+                    <Text style={styles.radioTitle}>📻 Radio</Text>
+                    <Text style={styles.radioSub}>Tap to browse stations</Text>
+                  </View>
+                </View>
               </Pressable>
               <View style={styles.radioRight}>
                 <Pressable
@@ -1435,6 +1406,46 @@ export default function Home() {
                 </Pressable>
               </View>
             </View>
+
+            {/* ── 4. Offline Games Banner (Premium Design - 50-50 Split) ── */}
+            <Pressable
+              onPress={() => {
+                router.push('/gaming-zone');
+                trackClick();
+              }}
+              style={[styles.offlineGamesBanner, { borderColor: cardBorder }]}
+              testID="home-offline-games"
+            >
+              <View style={styles.gamesBannerHeader}>
+                <View style={styles.gamesIconBg}>
+                  <Ionicons name="game-controller" size={20} color="#FFFFFF" />
+                </View>
+                <Text style={styles.offlineGamesTitle}>Offline Games</Text>
+                <View style={styles.gamesBadge}>
+                  <Text style={styles.gamesBadgeText}>NEW</Text>
+                </View>
+              </View>
+              <View style={styles.offlineGamesRow}>
+                <View style={styles.offlineGameCard}>
+                  <View style={[styles.gameCardGradient, { backgroundColor: '#6366F1' }]}>
+                    <Text style={styles.gameCardEmoji}>🎲</Text>
+                    <Text style={styles.offlineGameName}>Ludo</Text>
+                    <Text style={styles.gameCardDesc}>Classic Board Game</Text>
+                  </View>
+                </View>
+                <View style={styles.offlineGameCard}>
+                  <View style={[styles.gameCardGradient, { backgroundColor: '#EC4899' }]}>
+                    <Text style={styles.gameCardEmoji}>🏃</Text>
+                    <Text style={styles.offlineGameName}>Super Boy</Text>
+                    <Text style={styles.gameCardDesc}>Platformer Adventure</Text>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.gamesFooter}>
+                <Ionicons name="cloud-offline-outline" size={14} color={COLORS.textMuted} />
+                <Text style={styles.offlineGamesHint}>No internet required • Tap to play</Text>
+              </View>
+            </Pressable>
 
             <Text style={styles.modeHint}>
               <Text style={{ color: COLORS.brandBlue, fontWeight: '700' }}>
@@ -1997,16 +2008,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.md,
     justifyContent: 'center',
-    gap: 4,
+  },
+  radioIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  radioIconBg: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: COLORS.brandOrange,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioTextWrap: {
+    flex: 1,
   },
   radioTitle: {
-    fontSize: 26,
-    fontWeight: FONT.weight.black,
+    fontSize: 18,
+    fontWeight: FONT.weight.bold,
     color: COLORS.text,
   },
   radioSub: {
     color: COLORS.textMuted,
     fontSize: FONT.size.xs,
+    marginTop: 2,
   },
   radioRight: {
     paddingHorizontal: SPACING.sm,
@@ -2095,22 +2122,46 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONT.size.sm,
   },
-  // ── Offline Games Banner Styles ──
+  // ── Offline Games Banner Styles (Premium Design) ──
   offlineGamesBanner: {
-    marginTop: SPACING.md,
-    marginHorizontal: SPACING.lg,
-    backgroundColor: '#1A1A2E',
+    backgroundColor: '#FFFFFF',
     borderRadius: RADIUS.md,
+    borderWidth: 1,
     padding: SPACING.md,
+    marginBottom: SPACING.md,
     overflow: 'hidden',
   },
+  gamesBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.sm,
+    gap: 10,
+  },
+  gamesIconBg: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#6366F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   offlineGamesTitle: {
-    color: '#FFFFFF',
+    flex: 1,
+    color: COLORS.text,
     fontSize: FONT.size.lg,
     fontWeight: FONT.weight.bold,
-    textAlign: 'center',
-    marginBottom: SPACING.sm,
-    letterSpacing: 1,
+  },
+  gamesBadge: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  gamesBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: FONT.weight.bold,
+    letterSpacing: 0.5,
   },
   offlineGamesRow: {
     flexDirection: 'row',
@@ -2118,35 +2169,46 @@ const styles = StyleSheet.create({
   },
   offlineGameCard: {
     flex: 1,
-    height: 120,
     borderRadius: RADIUS.sm,
     overflow: 'hidden',
-    position: 'relative',
   },
-  offlineGameImage: {
-    width: '100%',
-    height: '100%',
+  gameCardGradient: {
+    padding: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 110,
+    borderRadius: RADIUS.sm,
   },
-  offlineGameOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+  gameCardEmoji: {
+    fontSize: 32,
+    marginBottom: 6,
   },
   offlineGameName: {
     color: '#FFFFFF',
-    fontSize: FONT.size.sm,
-    fontWeight: FONT.weight.semibold,
+    fontSize: FONT.size.md,
+    fontWeight: FONT.weight.bold,
     textAlign: 'center',
   },
-  offlineGamesHint: {
-    color: '#AAAAAA',
+  gameCardDesc: {
+    color: 'rgba(255,255,255,0.8)',
     fontSize: FONT.size.xs,
     textAlign: 'center',
+    marginTop: 2,
+  },
+  gamesFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     marginTop: SPACING.sm,
+    paddingTop: SPACING.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+  },
+  offlineGamesHint: {
+    color: COLORS.textMuted,
+    fontSize: FONT.size.xs,
+    textAlign: 'center',
   },
   progressTrack: {
     height: 3,
