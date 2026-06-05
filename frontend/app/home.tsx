@@ -760,15 +760,18 @@ export default function Home() {
     return () => sub.remove();
   }, [tabSwitcherOpen, menuOpen, renderMode, canGoBack, activeTabId, openUrl]);
 
-  const goSearch = (raw?: string) => {
-    const text = (raw ?? input).trim();
-    if (!text) return;
-    Keyboard.dismiss();
-    const target = buildSearchUrl(text, ultraLite);
-    setInput(text);
-    openUrl(target);
-    trackClick();
-  };
+  const goSearch = useCallback(
+    async (raw?: string) => {
+      const text = (raw ?? input).trim();
+      if (!text) return;
+      Keyboard.dismiss();
+      const target = buildSearchUrl(text, ultraLite);
+      setInput(target.startsWith('http') ? target : text);
+      await openUrl(target);
+      trackClick();
+    },
+    [input, ultraLite, openUrl]
+  );
 
   const onNav = useCallback(
     (navState: any) => {
@@ -1126,7 +1129,9 @@ export default function Home() {
               onSubmitEditing={() => goSearch()}
               autoCapitalize="none"
               autoCorrect={false}
-              returnKeyType="search"
+              returnKeyType="go"
+              blurOnSubmit={true}
+              enablesReturnKeyAutomatically={false}
             />
             {input.length > 0 && (
               <Pressable
