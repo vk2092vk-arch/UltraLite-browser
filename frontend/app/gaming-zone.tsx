@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { WebView } from 'react-native-webview';
-import { LUDO_GAME_HTML, SUPERBOY_GAME_HTML } from '../src/games/gameContent';
+import { LUDO_GAME_HTML } from '../src/games/gameContent';
 
 // ── Design tokens ──
 const COLORS = {
@@ -68,14 +68,6 @@ const GAMES: Game[] = [
     image: 'https://images.unsplash.com/photo-1596687909057-dfac2b25b891?w=600&h=400&fit=crop',
     gameHtml: LUDO_GAME_HTML,
     icon: 'dice-outline',
-  },
-  {
-    id: 'superboy',
-    name: 'Super Boy',
-    description: 'Jump, run and collect coins!',
-    image: 'https://images.pexels.com/photos/13930769/pexels-photo-13930769.jpeg?w=600&h=400&fit=crop',
-    gameHtml: SUPERBOY_GAME_HTML,
-    icon: 'game-controller-outline',
   },
 ];
 
