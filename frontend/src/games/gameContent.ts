@@ -92,12 +92,27 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'Segoe UI',system-u
 .setup-label{font-size:14px;font-weight:600;margin-bottom:8px;color:#333}
 .setup-select{width:100%;padding:12px;border-radius:8px;border:2px solid #ddd;font-size:14px;margin-bottom:16px}
 .setup-start{width:100%;padding:14px;background:linear-gradient(180deg,#51cf66,#40c057);color:#fff;border:none;border-radius:12px;font-size:18px;font-weight:700;cursor:pointer}
+.settings-btn{width:40px;height:40px;border-radius:10px;background:rgba(0,0,0,0.3);border:none;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer}
+.settings-modal{position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}
+.settings-modal.hide{display:none}
+.settings-box{background:#fff;border-radius:16px;padding:20px;width:100%;max-width:300px}
+.settings-title{font-size:20px;font-weight:700;text-align:center;margin-bottom:16px;color:#333}
+.settings-item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #eee}
+.settings-item:last-child{border-bottom:none}
+.settings-label{font-size:14px;font-weight:600;color:#333;display:flex;align-items:center;gap:8px}
+.toggle{width:50px;height:28px;background:#ddd;border-radius:14px;position:relative;cursor:pointer;transition:background 0.3s}
+.toggle.on{background:#51cf66}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:24px;background:#fff;border-radius:50%;transition:transform 0.3s;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
+.toggle.on::after{transform:translateX(22px)}
+.exit-btn{width:100%;padding:14px;background:linear-gradient(180deg,#ff6b6b,#ee5a5a);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;margin-top:16px;display:flex;align-items:center;justify-content:center;gap:8px}
+.close-settings{width:100%;padding:12px;background:#eee;color:#333;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;margin-top:10px}
 </style>
 </head>
 <body>
 <div class="game">
 <div class="header">
 <div class="title"><span>U</span><span>L</span><span>T</span><span>R</span><span>A</span> LUDO</div>
+<button class="settings-btn" id="settingsBtn">⚙️</button>
 </div>
 <div class="players-top">
 <div class="player-info left" id="p0info" style="display:none"><div class="avatar red">🎮</div><div><div class="pname" id="p0name">Red</div><div class="pscore">⭐<span id="p0score">0</span></div></div></div>
@@ -147,6 +162,22 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'Segoe UI',system-u
 </div>
 </div>
 
+<div class="settings-modal hide" id="settingsModal">
+<div class="settings-box">
+<div class="settings-title">⚙️ Settings</div>
+<div class="settings-item">
+<div class="settings-label">🔊 Sound</div>
+<div class="toggle on" id="soundToggle"></div>
+</div>
+<div class="settings-item">
+<div class="settings-label">📳 Vibration</div>
+<div class="toggle on" id="vibrationToggle"></div>
+</div>
+<button class="exit-btn" id="exitBtn">🚪 Exit Game</button>
+<button class="close-settings" id="closeSettings">Close</button>
+</div>
+</div>
+
 <script>
 (function(){
 var COLORS=['red','green','yellow','blue'];
@@ -159,9 +190,36 @@ var rollBtn=document.getElementById('rollBtn');
 var turnText=document.getElementById('turnText');
 var setup=document.getElementById('setup');
 var startBtn=document.getElementById('startBtn');
+var settingsBtn=document.getElementById('settingsBtn');
+var settingsModal=document.getElementById('settingsModal');
+var soundToggle=document.getElementById('soundToggle');
+var vibrationToggle=document.getElementById('vibrationToggle');
+var exitBtn=document.getElementById('exitBtn');
+var closeSettings=document.getElementById('closeSettings');
 
 var SIZE,CELL;
 var game=null;
+var soundEnabled=true;
+var vibrationEnabled=true;
+
+// Settings event listeners
+settingsBtn.onclick=function(){settingsModal.classList.remove('hide');};
+closeSettings.onclick=function(){settingsModal.classList.add('hide');};
+soundToggle.onclick=function(){
+soundEnabled=!soundEnabled;
+soundToggle.classList.toggle('on',soundEnabled);
+};
+vibrationToggle.onclick=function(){
+vibrationEnabled=!vibrationEnabled;
+vibrationToggle.classList.toggle('on',vibrationEnabled);
+};
+exitBtn.onclick=function(){
+if(confirm('Exit game? Progress will be lost.')){
+setup.classList.remove('hide');
+settingsModal.classList.add('hide');
+game=null;
+}
+};
 
 // Board cell types: 0=empty, 1=path, r/g/y/b=colored path, s=safe
 var BOARD=[
@@ -431,6 +489,7 @@ if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
 return audioCtx;
 }
 function playSound(freq,duration,type){
+if(!soundEnabled)return;
 try{
 var ctx=getAudioCtx();
 var osc=ctx.createOscillator();
@@ -446,24 +505,29 @@ osc.stop(ctx.currentTime+duration);
 }catch(e){}
 }
 function playDiceSound(){
+if(!soundEnabled)return;
 playSound(200,0.05,'square');
 setTimeout(function(){playSound(250,0.05,'square');},50);
 setTimeout(function(){playSound(300,0.05,'square');},100);
 setTimeout(function(){playSound(400,0.1,'sine');},150);
 }
 function playMoveSound(){
+if(!soundEnabled)return;
 playSound(600,0.08,'sine');
 }
 function playCaptureSound(){
+if(!soundEnabled)return;
 playSound(150,0.15,'sawtooth');
 setTimeout(function(){playSound(100,0.2,'sawtooth');},100);
 }
 function playWinSound(){
+if(!soundEnabled)return;
 [0,100,200,300,400].forEach(function(d,i){
 setTimeout(function(){playSound(400+i*100,0.15,'sine');},d);
 });
 }
 function vibrate(pattern){
+if(!vibrationEnabled)return;
 try{
 if(navigator.vibrate)navigator.vibrate(pattern);
 }catch(e){}
