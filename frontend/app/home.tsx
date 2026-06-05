@@ -1091,10 +1091,7 @@ export default function Home() {
 
       {showHome && (
         <View
-          style={[
-            styles.brandHero,
-            { borderColor: ultraLite ? COLORS.brandOrange : COLORS.brandBlue },
-          ]}
+          style={styles.brandHero}
           testID="brand-hero"
         >
           <Image
@@ -1298,51 +1295,7 @@ export default function Home() {
               </Pressable>
             </View>
 
-            {/* ── 2. Radio card with Watch Ad + Share App unlock ── */}
-            <View
-              style={[styles.radioCard, { borderColor: cardBorder }]}
-              testID="home-radio-card"
-            >
-              <Pressable
-                onPress={() => {
-                  router.push('/radio');
-                  trackClick();
-                }}
-                style={styles.radioLeft}
-                testID="home-radio-open"
-              >
-                <Ionicons name="radio" size={28} color={COLORS.brandOrange} />
-                <Text style={styles.radioTitle}>Radio</Text>
-                <Text style={styles.radioSub}>Tap to browse stations</Text>
-              </Pressable>
-              <View style={styles.radioRight}>
-                <Pressable
-                  onPress={() => {
-                    router.push('/radio');
-                    trackClick();
-                  }}
-                  style={styles.radioUnlockBtn}
-                  testID="home-radio-watch-ad"
-                >
-                  <Ionicons name="play-circle-outline" size={14} color={COLORS.brandOrange} />
-                  <Text style={styles.radioUnlockText}>
-                    Watch Ad{'\n'}Unlock 30 Min
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleShareApp}
-                  style={styles.radioUnlockBtn}
-                  testID="home-radio-share-app"
-                >
-                  <Ionicons name="share-social-outline" size={14} color={COLORS.brandBlue} />
-                  <Text style={styles.radioUnlockText}>
-                    Share App{'\n'}Unlock 30 Min
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-
-            {/* ── 3. Websites tiles (CricApp pinned + Add new) ── */}
+            {/* ── 2. Websites tiles (MOVED UP - CricApp pinned + Add new) ── */}
             <View style={[styles.appsCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
               <View style={styles.appsGrid}>
                 {shortcuts.map((s) => {
@@ -1395,6 +1348,85 @@ export default function Home() {
                     <Ionicons name="add" size={26} color={COLORS.brandOrange} />
                   </View>
                   <Text style={styles.appLabel}>Add new</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* ── 3. Offline Games Banner (50-50 Split View) ── */}
+            <Pressable
+              onPress={() => {
+                router.push('/gaming-zone');
+                trackClick();
+              }}
+              style={styles.offlineGamesBanner}
+              testID="home-offline-games"
+            >
+              <Text style={styles.offlineGamesTitle}>🎮 Offline Games</Text>
+              <View style={styles.offlineGamesRow}>
+                <View style={styles.offlineGameCard}>
+                  <Image
+                    source={{ uri: 'https://images.unsplash.com/photo-1596687909057-dfac2b25b891?w=400&h=300&fit=crop' }}
+                    style={styles.offlineGameImage}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.offlineGameOverlay}>
+                    <Text style={styles.offlineGameName}>Ludo</Text>
+                  </View>
+                </View>
+                <View style={styles.offlineGameCard}>
+                  <Image
+                    source={{ uri: 'https://images.pexels.com/photos/13930769/pexels-photo-13930769.jpeg?w=400&h=300&fit=crop' }}
+                    style={styles.offlineGameImage}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.offlineGameOverlay}>
+                    <Text style={styles.offlineGameName}>Super Boy</Text>
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.offlineGamesHint}>Tap to play • No internet needed</Text>
+            </Pressable>
+
+            {/* ── 4. Radio card (MOVED DOWN - with Watch Ad + Share App unlock) ── */}
+            <View
+              style={[styles.radioCard, { borderColor: cardBorder }]}
+              testID="home-radio-card"
+            >
+              <Pressable
+                onPress={() => {
+                  router.push('/radio');
+                  trackClick();
+                }}
+                style={styles.radioLeft}
+                testID="home-radio-open"
+              >
+                <Ionicons name="radio" size={28} color={COLORS.brandOrange} />
+                <Text style={styles.radioTitle}>Radio</Text>
+                <Text style={styles.radioSub}>Tap to browse stations</Text>
+              </Pressable>
+              <View style={styles.radioRight}>
+                <Pressable
+                  onPress={() => {
+                    router.push('/radio');
+                    trackClick();
+                  }}
+                  style={styles.radioUnlockBtn}
+                  testID="home-radio-watch-ad"
+                >
+                  <Ionicons name="play-circle-outline" size={14} color={COLORS.brandOrange} />
+                  <Text style={styles.radioUnlockText}>
+                    Watch Ad{'\n'}Unlock 30 Min
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleShareApp}
+                  style={styles.radioUnlockBtn}
+                  testID="home-radio-share-app"
+                >
+                  <Ionicons name="share-social-outline" size={14} color={COLORS.brandBlue} />
+                  <Text style={styles.radioUnlockText}>
+                    Share App{'\n'}Unlock 30 Min
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -1801,9 +1833,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     marginHorizontal: SPACING.lg,
     marginTop: SPACING.sm,
-    borderWidth: 2,
-    borderColor: COLORS.brandOrange,
-    borderRadius: RADIUS.sm,
+    // Border removed as per user request
     backgroundColor: '#FFFFFF',
     gap: 12,
   },
@@ -1865,6 +1895,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: SPACING.md,
     paddingVertical: 12,
+    // Highlighted border for search box
+    borderWidth: 2,
+    borderColor: COLORS.brandOrange,
   },
   searchInput: {
     flex: 1,
@@ -2056,6 +2089,59 @@ const styles = StyleSheet.create({
     marginTop: SPACING.lg,
     color: COLORS.textMuted,
     fontSize: FONT.size.sm,
+  },
+  // ── Offline Games Banner Styles ──
+  offlineGamesBanner: {
+    marginTop: SPACING.md,
+    marginHorizontal: SPACING.lg,
+    backgroundColor: '#1A1A2E',
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    overflow: 'hidden',
+  },
+  offlineGamesTitle: {
+    color: '#FFFFFF',
+    fontSize: FONT.size.lg,
+    fontWeight: FONT.weight.bold,
+    textAlign: 'center',
+    marginBottom: SPACING.sm,
+    letterSpacing: 1,
+  },
+  offlineGamesRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  offlineGameCard: {
+    flex: 1,
+    height: 120,
+    borderRadius: RADIUS.sm,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  offlineGameImage: {
+    width: '100%',
+    height: '100%',
+  },
+  offlineGameOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+  },
+  offlineGameName: {
+    color: '#FFFFFF',
+    fontSize: FONT.size.sm,
+    fontWeight: FONT.weight.semibold,
+    textAlign: 'center',
+  },
+  offlineGamesHint: {
+    color: '#AAAAAA',
+    fontSize: FONT.size.xs,
+    textAlign: 'center',
+    marginTop: SPACING.sm,
   },
   progressTrack: {
     height: 3,
