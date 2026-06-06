@@ -1,5 +1,5 @@
 // Ultra Ludo Champs - Fixed Version
-// Version 1.0.5 - All Issues Fixed
+// Version 1.0.3
 
 export const LUDO_GAME_HTML = `<!DOCTYPE html>
 <html>
@@ -80,7 +80,7 @@ body{background:linear-gradient(180deg,#e8d4b8 0%,#d4b896 50%,#c9a882 100%)}
 .cell.green-path{background:#c8e6c9}
 .cell.yellow-path{background:#fff9c4}
 .cell.blue-path{background:#bbdefb}
-.cell.safe::after{content:"★";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#f39c12;font-size:8px;text-shadow:0 0 2px #000}
+.cell.safe::after{content:"★";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#f39c12;font-size:14px;text-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 8px rgba(243,156,18,0.6);z-index:1}
 .cell.white-base{background:#fff}
 .cell.center{background:#f8f4ef}
 
