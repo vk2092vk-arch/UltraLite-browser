@@ -1426,20 +1426,16 @@ export default function Home() {
                 </View>
               </View>
               <View style={styles.offlineGamesRow}>
-                <View style={styles.offlineGameCard}>
+                <Pressable 
+                  style={[styles.offlineGameCard, { flex: 1 }]}
+                  onPress={() => router.push('/gaming-zone')}
+                >
                   <View style={[styles.gameCardGradient, { backgroundColor: '#6366F1' }]}>
                     <Text style={styles.gameCardEmoji}>🎲</Text>
                     <Text style={styles.offlineGameName}>Ludo</Text>
                     <Text style={styles.gameCardDesc}>Classic Board Game</Text>
                   </View>
-                </View>
-                <View style={styles.offlineGameCard}>
-                  <View style={[styles.gameCardGradient, { backgroundColor: '#EC4899' }]}>
-                    <Text style={styles.gameCardEmoji}>🏃</Text>
-                    <Text style={styles.offlineGameName}>Super Boy</Text>
-                    <Text style={styles.gameCardDesc}>Platformer Adventure</Text>
-                  </View>
-                </View>
+                </Pressable>
               </View>
               <View style={styles.gamesFooter}>
                 <Ionicons name="cloud-offline-outline" size={14} color={COLORS.textMuted} />

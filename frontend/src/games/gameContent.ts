@@ -44,8 +44,8 @@ body{background:linear-gradient(180deg,#e8d4b8 0%,#d4b896 50%,#c9a882 100%)}
 .turn-arrow{color:#e74c3c;font-size:14px;margin-left:4px}
 
 /* Board Area */
-.board-wrapper{flex:1;display:flex;align-items:center;justify-content:center;padding:4px 8px;position:relative}
-.board{position:relative;background:#f5f0e6;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.25),inset 0 0 10px rgba(0,0,0,0.1);overflow:hidden;aspect-ratio:1}
+.board-wrapper{flex:1;display:flex;align-items:center;justify-content:center;padding:4px 8px;position:relative;min-height:200px}
+.board{position:relative;background:#f5f0e6;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.25),inset 0 0 10px rgba(0,0,0,0.1);overflow:hidden;width:90vw;height:90vw;max-width:350px;max-height:350px}
 .board-inner{display:grid;grid-template-columns:6fr 3fr 6fr;grid-template-rows:6fr 3fr 6fr;width:100%;height:100%}
 
 /* Quadrants */

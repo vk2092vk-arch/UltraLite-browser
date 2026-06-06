@@ -111,17 +111,10 @@ export default function GamingZone() {
             scrollEnabled={false}
             showsHorizontalScrollIndicator={false}
             showsVerticalScrollIndicator={false}
+            mediaPlaybackRequiresUserAction={false}
+            allowsInlineMediaPlayback={true}
           />
         )}
-
-        {/* Floating Exit Button - Always visible on top */}
-        <Pressable 
-          onPress={handleBackFromGame} 
-          style={styles.floatingExitButton}
-        >
-          <Ionicons name="close" size={20} color={COLORS.text} />
-          <Text style={styles.exitButtonText}>EXIT</Text>
-        </Pressable>
       </View>
     );
   }
